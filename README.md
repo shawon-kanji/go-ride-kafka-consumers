@@ -1,15 +1,25 @@
-# go-ride-kafka-consumers
+# go-ride-kafka-workers
 
-Minimal boilerplate project for Kafka worker services.
+Monorepo for Kafka-driven, independently deployable worker services.
+
+## Services
+
+- `services/location-worker`: driver location ingest and persistence worker
+- `services/trip-dispatch-worker`: ride request dispatch worker
+
+Each service has its own `go.mod`, runtime entrypoints, and env configuration.
+
+## Workspace
+
+- Root `go.work` connects both service modules for local development.
+- Root `Makefile` provides per-service test/build/run commands.
 
 ## Structure
 
-- `cmd/driver-location-worker`: first worker entrypoint
-- `internal/config`: env config loader
-- `internal/bootstrap`: app wiring
-- `internal/worker`: worker contract/runner
-- `internal/kafka`: Kafka placeholders
-- `pkg/events`: event contract structs
+- `services/location-worker/cmd/api`: location API process
+- `services/location-worker/cmd/consumer`: location consumer process
+- `services/trip-dispatch-worker/cmd/api`: dispatch API/operator process
+- `services/trip-dispatch-worker/cmd/consumer`: dispatch consumer process
 
 ## Shared DB schema
 
@@ -21,8 +31,26 @@ make migrate-up
 make migrate-version
 ```
 
-## Run
+## Run service processes
 
 ```bash
-go run ./cmd/driver-location-worker
+make run-location-api
+make run-location-consumer
+make run-dispatch-api
+make run-dispatch-consumer
+```
+
+## Build and test
+
+```bash
+make test-location
+make test-dispatch
+make build-location
+make build-dispatch
+```
+
+## Create Kafka topics
+
+```bash
+make topic-create-all
 ```
