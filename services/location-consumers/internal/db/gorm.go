@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"go-ride-kafka-consumers/services/location-worker/internal/config"
+	"go-ride-kafka-consumers/services/location-consumers/internal/config"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"

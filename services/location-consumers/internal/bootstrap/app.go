@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"log"
 
-	"go-ride-kafka-consumers/services/location-worker/internal/config"
-	"go-ride-kafka-consumers/services/location-worker/internal/db"
-	"go-ride-kafka-consumers/services/location-worker/internal/kafka"
-	"go-ride-kafka-consumers/services/location-worker/internal/worker"
+	"go-ride-kafka-consumers/services/location-consumers/internal/config"
+	"go-ride-kafka-consumers/services/location-consumers/internal/db"
+	"go-ride-kafka-consumers/services/location-consumers/internal/kafka"
+	"go-ride-kafka-consumers/services/location-consumers/internal/worker"
 )
 
 type App struct {
@@ -19,8 +19,8 @@ type App struct {
 	runner   *worker.Runner
 }
 
-func New() (*App, error) {
-	cfg, err := config.Load()
+func New(mode string) (*App, error) {
+	cfg, err := config.Load(mode)
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
@@ -35,7 +35,7 @@ func New() (*App, error) {
 		return nil, fmt.Errorf("extract sql db: %w", err)
 	}
 
-	consumer := kafka.NewNoopConsumer()
+	consumer := kafka.NewDriverLocationConsumer(cfg, gormDB)
 	runner := worker.NewRunner(consumer)
 
 	return &App{
@@ -47,7 +47,7 @@ func New() (*App, error) {
 }
 
 func (a *App) Run(ctx context.Context) error {
-	log.Printf("starting service=%s topic=%s group=%s brokers=%v", a.cfg.ServiceName, a.cfg.KafkaTopic, a.cfg.ConsumerGroup, a.cfg.KafkaBrokers)
+	log.Printf("starting service=%s mode=%s topic=%s group=%s brokers=%v", a.cfg.ServiceName, a.cfg.Mode, a.cfg.KafkaTopic, a.cfg.ConsumerGroup, a.cfg.KafkaBrokers)
 
 	defer func() {
 		if err := a.sqlDB.Close(); err != nil {

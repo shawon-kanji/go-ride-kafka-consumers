@@ -6,7 +6,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"go-ride-kafka-consumers/services/location-worker/internal/bootstrap"
+	"go-ride-kafka-consumers/services/location-producers/internal/bootstrap"
 )
 
 func main() {
@@ -19,6 +19,6 @@ func main() {
 	}
 
 	if err := app.Run(ctx); err != nil {
-		log.Fatalf("run worker: %v", err)
+		log.Fatalf("run ingest api: %v", err)
 	}
 }

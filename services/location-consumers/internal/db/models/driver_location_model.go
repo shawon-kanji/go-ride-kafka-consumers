@@ -1,7 +1,7 @@
 package models
 
 import (
-	"go-ride-kafka-consumers/services/location-worker/internal/domain/location"
+	"go-ride-kafka-consumers/services/location-consumers/internal/domain/location"
 
 	schemamodels "github.com/shawon-kanji/go-ride-db-schema/models"
 )

@@ -7,7 +7,8 @@ RIDE_ASSIGNED_TOPIC ?= ride.assigned.v1
 RIDE_UNASSIGNED_TOPIC ?= ride.unassigned.v1
 
 .PHONY: up down restart logs ps topic-create topic-list topic-delete topic-create-all migrate-up migrate-down migrate-version \
-	build-location build-dispatch test-location test-dispatch run-location-api run-location-consumer run-dispatch-api run-dispatch-consumer
+	build-location build-location-producers build-location-consumers build-dispatch test-location test-dispatch \
+	run-location-producers run-location-consumers run-dispatch-api run-dispatch-consumer
 
 up:
 	$(COMPOSE) up -d
@@ -48,22 +49,30 @@ migrate-version:
 	cd ../go-ride-db-schema && go run ./cmd/migrate version
 
 build-location:
-	cd services/location-worker && go build ./...
+	$(MAKE) build-location-producers
+	$(MAKE) build-location-consumers
+
+build-location-producers:
+	cd services/location-producers && go build ./...
+
+build-location-consumers:
+	cd services/location-consumers && go build ./...
 
 build-dispatch:
 	cd services/trip-dispatch-worker && go build ./...
 
 test-location:
-	cd services/location-worker && go test ./...
+	cd services/location-producers && go test ./...
+	cd services/location-consumers && go test ./...
 
 test-dispatch:
 	cd services/trip-dispatch-worker && go test ./...
 
-run-location-api:
-	cd services/location-worker && go run ./cmd/api
+run-location-producers:
+	cd services/location-producers && go run ./cmd/api
 
-run-location-consumer:
-	cd services/location-worker && go run ./cmd/consumer
+run-location-consumers:
+	cd services/location-consumers && go run ./cmd/consumer
 
 run-dispatch-api:
 	cd services/trip-dispatch-worker && go run ./cmd/api

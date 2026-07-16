@@ -6,14 +6,14 @@ import (
 	"os/signal"
 	"syscall"
 
-	"go-ride-kafka-consumers/services/location-worker/internal/bootstrap"
+	"go-ride-kafka-consumers/services/location-consumers/internal/bootstrap"
 )
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	app, err := bootstrap.New()
+	app, err := bootstrap.New("consumer")
 	if err != nil {
 		log.Fatalf("bootstrap app: %v", err)
 	}

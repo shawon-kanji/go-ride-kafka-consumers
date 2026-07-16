@@ -9,7 +9,9 @@ import (
 
 type Config struct {
 	ServiceName   string
+	Mode          string
 	LogLevel      string
+	HTTPAddr      string
 	DB            DBConfig
 	KafkaBrokers  []string
 	KafkaTopic    string
@@ -25,15 +27,17 @@ type DBConfig struct {
 	SSLMode  string
 }
 
-func Load() (Config, error) {
+func Load(mode string) (Config, error) {
 	dbPort, err := getIntEnv("DB_PORT", 5432)
 	if err != nil {
 		return Config{}, fmt.Errorf("invalid DB_PORT: %w", err)
 	}
 
 	cfg := Config{
-		ServiceName: getEnv("SERVICE_NAME", "location-worker"),
+		ServiceName: getEnv("SERVICE_NAME", "location-consumers"),
+		Mode:        mode,
 		LogLevel:    getEnv("LOG_LEVEL", "info"),
+		HTTPAddr:    getEnv("HTTP_ADDR", ":8080"),
 		DB: DBConfig{
 			Host:     getEnv("DB_HOST", "localhost"),
 			Port:     dbPort,
@@ -43,7 +47,7 @@ func Load() (Config, error) {
 			SSLMode:  getEnv("DB_SSLMODE", "disable"),
 		},
 		KafkaTopic:    getEnv("KAFKA_TOPIC", "driver.location.updated.v1"),
-		ConsumerGroup: getEnv("KAFKA_CONSUMER_GROUP", "location-worker-group"),
+		ConsumerGroup: getEnv("KAFKA_CONSUMER_GROUP", "location-consumers-group"),
 		KafkaBrokers:  splitAndTrim(getEnv("KAFKA_BROKERS", "localhost:9094")),
 	}
 
@@ -55,6 +59,9 @@ func Load() (Config, error) {
 	}
 	if cfg.ConsumerGroup == "" {
 		return Config{}, fmt.Errorf("KAFKA_CONSUMER_GROUP is required")
+	}
+	if cfg.HTTPAddr == "" {
+		return Config{}, fmt.Errorf("HTTP_ADDR is required")
 	}
 
 	return cfg, nil

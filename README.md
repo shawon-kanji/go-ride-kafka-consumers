@@ -4,7 +4,8 @@ Monorepo for Kafka-driven, independently deployable worker services.
 
 ## Services
 
-- `services/location-worker`: driver location ingest and persistence worker
+- `services/location-producers`: driver location HTTP ingest and Kafka producer service
+- `services/location-consumers`: driver location ingest and persistence worker
 - `services/trip-dispatch-worker`: ride request dispatch worker
 
 Each service has its own `go.mod`, runtime entrypoints, and env configuration.
@@ -16,8 +17,8 @@ Each service has its own `go.mod`, runtime entrypoints, and env configuration.
 
 ## Structure
 
-- `services/location-worker/cmd/api`: location API process
-- `services/location-worker/cmd/consumer`: location consumer process
+- `services/location-producers/cmd/api`: location ingest API process
+- `services/location-consumers/cmd/consumer`: location consumer process
 - `services/trip-dispatch-worker/cmd/api`: dispatch API/operator process
 - `services/trip-dispatch-worker/cmd/consumer`: dispatch consumer process
 
@@ -34,8 +35,8 @@ make migrate-version
 ## Run service processes
 
 ```bash
-make run-location-api
-make run-location-consumer
+make run-location-producers
+make run-location-consumers
 make run-dispatch-api
 make run-dispatch-consumer
 ```

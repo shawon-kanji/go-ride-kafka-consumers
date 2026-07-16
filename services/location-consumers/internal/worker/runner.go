@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"go-ride-kafka-consumers/services/location-worker/internal/kafka"
+	"go-ride-kafka-consumers/services/location-consumers/internal/kafka"
 )
 
 type Runner struct {
