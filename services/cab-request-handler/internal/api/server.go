@@ -244,7 +244,7 @@ func (s *Server) createOrLoadCabRequest(ctx context.Context, req createCabReques
 				bundle = requestBundle{request: existing, fare: fare}
 				return nil
 			}
-			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
 				return fmt.Errorf("check existing trip request: %w", err)
 			}
 		}
