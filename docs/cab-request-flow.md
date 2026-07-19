@@ -2,6 +2,15 @@
 
 Recommended approach: implement schema-first in go-ride-db-schema, then add a new HTTP producer service (cab-request-handler) and a real trip-dispatch consumer with WebSocket fanout integration. Keep Kafka as system backbone: request API writes DB state + publishes ride.requested.v1; dispatcher consumes, finds nearest drivers from latest location table, persists driver job offers, and pushes realtime offers with durable replay from DB.
 
+**Plan revision (2026-07-19): fare-estimate/book split.**
+Original Phase 4 combined fare computation, `trip_requests` creation, and Kafka publish into one atomic `POST /request-cab` call. This is being split into two steps so a rider can see and confirm a fare before a search actually starts:
+1. `POST /fare-estimate` — computes and locks a fare quote (`trip_fares` row only), with no `trip_requests` row and no Kafka event. Returns `fare_id`, fare breakdown, `expires_at`.
+2. `POST /request-cab` — now takes `rider_id` + `fare_id` (+ idempotency/correlation keys) instead of raw pickup/dropoff. It loads the locked, unexpired, unused `trip_fares` row, creates `trip_requests` pointing at it, and only then publishes `ride.requested.v1`. If the fare is expired, it rejects (`fare_expired`) rather than silently repricing — the client must call `/fare-estimate` again.
+
+This requires decoupling `trip_fares` from `trip_requests` in the schema (today `trip_fares.request_id` is `NOT NULL UNIQUE` with an FK to `trip_requests`, which assumes the request exists first — the inverse of what's needed).
+
+**Chosen mechanism**: keep the existing FK and `UNIQUE` constraint on `trip_fares.request_id`, just drop `NOT NULL` (Postgres `UNIQUE` allows multiple `NULL`s, so this is safe). `request_id IS NULL` means "unconsumed, bookable" quote; `IS NOT NULL` means "already booked." Booking claims a fare via a conditional `UPDATE trip_fares SET request_id = ? WHERE fare_id = ? AND request_id IS NULL` inside the same transaction as the `trip_requests` insert, checking `RowsAffected == 1` — this is the race-safe "first booker wins" guard for concurrent `/request-cab` calls against the same `fare_id`, with no explicit row locking needed. `trip_fares` also gains `rider_id`, `pickup_lat/lng`, `dropoff_lat/lng`, `pickup_geohash`, `pickup_s2_cell_id`, `search_radius_km` so a fare estimate is fully self-contained and `/request-cab` only needs `rider_id` + `fare_id`.
+
 Current naming note:
 - Database schema and Go models now standardize on `trip_id` for the business trip identifier.
 - Go models now use `ID` for primary key fields where practical.
@@ -11,7 +20,8 @@ Current completion status:
 - Phase 1 completed as design/spec.
 - Phase 2 completed in `go-ride-db-schema` with migrations applied.
 - Phase 3 completed in `go-ride-db-schema`, tagged as `v0.2.0`, and adopted in `go-ride-kafka-consumers` root and `services/location-consumers` modules.
-- Phase 4 completed in `go-ride-kafka-consumers` with the new `services/cab-request-handler` HTTP producer service.
+- Phase 4 completed in `go-ride-kafka-consumers` with the new `services/cab-request-handler` HTTP producer service (original single-call design, since superseded by Phase 4a).
+- Phase 4a completed: `go-ride-db-schema` migration `000013` shipped and tagged `v0.3.0`; `cab-request-handler` now exposes `POST /fare-estimate` and a redesigned `POST /request-cab`. Verified end-to-end against a live local Postgres/Kafka: estimate → book → Kafka publish → `/current-trip` reflects it → idempotent replay → double-booking rejected (`fare_already_used`) → unknown fare rejected (`fare_not_found`) → expired fare rejected (`fare_expired`, verified against a real TTL wait, not just clock math). Dependency bump to `go-ride-db-schema v0.3.0` and the handler code are implemented locally but not yet committed/pushed in `go-ride-kafka-consumers`.
 
 **Steps**
 1. Phase 1 - Domain contracts and status model (blocks all later phases) [completed]
@@ -81,12 +91,21 @@ Current completion status:
    - Current model convention: use `ID` for primary key struct fields while preserving explicit `gorm:"column:..."` mappings.
    - Release status: schema package published as `v0.2.0`.
 
-4. Phase 4 - Cab request API service (depends on 3) [completed]
+4. Phase 4 - Cab request API service (depends on 3) [completed as originally scoped; being revised per fare-estimate/book split above]
    - Create new service module `services/cab-request-handler` (API + Kafka producer + DB access), following existing location-producers structure.
    - Endpoint: POST request for cab; validate payload; compute preliminary fare lock (create `trip_fares` record) and create `trip_requests` row with `status=search_started`, `fare_id` nullable until locked record exists.
    - Publish `ride.requested.v1` with request metadata and location fields to Kafka.
    - Return immediate response (`search started`) with `request_id`, `trip_id`, `status`, optional ETA window.
    - Add idempotency behavior: repeated client request key returns existing open request safely.
+
+4a. Phase 4a - Fare estimate/lock split (revision; depends on 4, supersedes Phase 4 booking behavior) [implemented]
+   - Schema migration `000013` in `go-ride-db-schema`: dropped `NOT NULL` on `trip_fares.request_id` (kept FK + `UNIQUE` — Postgres allows multiple `NULL`s); added `rider_id`, `pickup_lat/lng`, `dropoff_lat/lng`, `pickup_geohash`, `pickup_s2_cell_id`, `search_radius_km` columns to `trip_fares` so an estimate is self-contained before any `trip_requests` row exists (existing rows backfilled by joining the then-linked `trip_requests` row). `trip_requests.fare_id` stays as-is (already nullable, indexed, no FK) and is the sole link direction: request → fare. `models/trip_fare.go`'s `RequestID` field is now `*uuid.UUID` (breaking Go API change); added `TripFare.IsConsumed()`/`IsExpired(now)` helpers. Verified up/down/up round-trip against a live Postgres.
+   - Schema module tagged and released as `v0.3.0` (commit `229106c`), following the same commit → tag → release flow used for v0.2.0/v0.2.1.
+   - `POST /fare-estimate` in `cab-request-handler`: accepts rider_id + pickup/dropoff + optional search_radius_km; computes fare via `buildFareEstimate` (renamed from `buildTripFare`, same haversine/rate math); persists a standalone `trip_fares` row (`request_id=NULL`) with `locked_at`/`expires_at`; does NOT create a `trip_requests` row and does NOT publish to Kafka. Returns `fare_id`, fare breakdown, `currency_code`, `expires_at` (HTTP 201). No idempotency dedupe on this endpoint — every call mints a fresh quote; unused quotes simply expire.
+   - Redesigned `POST /request-cab`: request body is now `rider_id` + `fare_id` + `idempotency_key`/`correlation_id` (no more raw lat/lng in the booking call). Loads the `trip_fares` row by `fare_id`; validates it exists and belongs to `rider_id`, is not expired, and has `request_id IS NULL`; creates `trip_requests` with pickup/dropoff/geohash/search-radius copied from the locked fare row, then atomically claims the fare in the same transaction (`UPDATE trip_fares SET request_id=? WHERE fare_id=? AND request_id IS NULL`, checking `RowsAffected==1`); only then publishes `ride.requested.v1`. Existing idempotency-key dedupe (rider_id + idempotency_key → existing request, looked up via the request's `fare_id`) is preserved.
+   - Error responses (JSON body `{error, message}` via `writeJSONError`, sentinel errors `errFareNotFound`/`errFareExpired`/`errFareAlreadyUsed`): `fare_not_found` (404 — also returned when `fare_id` belongs to a different rider, to avoid leaking existence), `fare_expired` (409, client must re-estimate — no silent repricing), `fare_already_used` (409 — covers both "already booked earlier" and "lost a concurrent claim race").
+   - `fare_configs`/`fare_surcharges` tables remain unused for now (static env-driven fare config continues); wiring them in is a separate future enhancement, not part of this split.
+   - Verified live end-to-end (see "Completed through Phase 4a" below) against the local Postgres/Kafka containers; not yet committed/pushed in `go-ride-kafka-consumers`.
 
 5. Phase 5 - Real dispatcher worker (depends on 3; parallel with 4 once contracts fixed)
    - Replace noop consumer in trip-dispatch-worker with real Kafka consumer for `ride.requested.v1`.
@@ -130,13 +149,15 @@ Current completion status:
 - /Users/shawonkanji/Documents/projects/go-ride-kafka-consumers/services/trip-dispatch-worker/internal/bootstrap/app.go — wire DB, consumer, producers, and gateway client dependencies.
 - /Users/shawonkanji/Documents/projects/go-ride-kafka-consumers/services/trip-dispatch-worker/internal/config/config.go — add DB, websocket/gateway, and timeout/retry configuration knobs.
 - /Users/shawonkanji/Documents/projects/go-ride-kafka-consumers/services/trip-dispatch-worker/pkg/events/ride_request.go — extend event contract with request metadata/fare lock fields.
-- /Users/shawonkanji/Documents/projects/go-ride-kafka-consumers/services/cab-request-handler/internal/api/server.go — HTTP request handler that persists cab requests and publishes `ride.requested.v1`.
+- /Users/shawonkanji/Documents/projects/go-ride-kafka-consumers/services/cab-request-handler/internal/api/server.go — HTTP request handler; adding `POST /fare-estimate` and redesigning `POST /request-cab` to consume a locked `fare_id` instead of raw pickup/dropoff.
+- /Users/shawonkanji/Documents/projects/go-ride-kafka-consumers/services/cab-request-handler/internal/api/spatial.go — geohash/S2 helpers reused by the new fare-estimate handler.
 - /Users/shawonkanji/Documents/projects/go-ride-kafka-consumers/services/cab-request-handler/internal/kafka/producer.go — Kafka producer used by the cab request API.
+- /Users/shawonkanji/Documents/projects/go-ride-kafka-consumers/services/cab-request-handler/pkg/events/ride_requested.go — event contract, populated from the locked fare row at booking time.
 - /Users/shawonkanji/Documents/projects/go-ride-kafka-consumers/services/cab-request-handler/internal/bootstrap/app.go — wires config, DB, Kafka producer, and HTTP server.
 - /Users/shawonkanji/Documents/projects/go-ride-kafka-consumers/Makefile — add build/test/run targets for new cab-request-handler and realtime gateway services.
 - /Users/shawonkanji/Documents/projects/go-ride-kafka-consumers/go.work — include new modules under services.
-- go-ride-db-schema/migrations/* — add ordered migration files for trip requests, offers, fares, surcharges, ongoing, history.
-- go-ride-db-schema/models/* — add corresponding GORM models and relations.
+- go-ride-db-schema/migrations/* — add ordered migration files for trip requests, offers, fares, surcharges, ongoing, history; new `000013` migration to decouple `trip_fares` from `trip_requests` and add pickup/dropoff/geohash/search-radius columns to `trip_fares`.
+- go-ride-db-schema/models/* — add corresponding GORM models and relations; update `models/trip_fare.go` for the decoupled/self-contained fare estimate.
 
 **Implemented schema/model alignment**
 - `trip_requests.request_id` remains the primary key column; the Go model field is now `ID`.
@@ -150,6 +171,19 @@ Current completion status:
 - Phase 2 migrations `000005` through `000012` exist in `go-ride-db-schema` and were applied to the `go_ride` database.
 - Phase 3 models were added in `go-ride-db-schema`, validated with `go test ./...`, and released as tag `v0.2.0`.
 - `go-ride-kafka-consumers` now references `github.com/shawon-kanji/go-ride-db-schema v0.2.0` in both the root module and `services/location-consumers`.
+
+**Completed through Phase 4a**
+- `go-ride-db-schema`: migration `000013` applied/rolled-back/re-applied cleanly against a live local Postgres; `models/trip_fare.go` updated; released and pushed as tag `v0.3.0`.
+- `go-ride-kafka-consumers` dependency on `go-ride-db-schema` bumped to `v0.3.0` in root, `services/location-consumers`, and `services/cab-request-handler`; all workspace modules (`location-producers`, `location-consumers`, `cab-request-handler`, `trip-dispatch-worker`) plus the root module build and vet clean.
+- `cab-request-handler` end-to-end manual verification against local Postgres + Kafka containers:
+  - `POST /fare-estimate` → `201`, fare row created with `request_id IS NULL`.
+  - `POST /request-cab` with that `fare_id` → `202`, fare row claimed (`request_id` set), `ride.requested.v1` published with the full fare breakdown and location fields, `GET /current-trip` reflects the active request.
+  - Same `idempotency_key` replayed → same `request_id`/`trip_id` returned (no duplicate booking).
+  - Same `fare_id` booked again with a different `idempotency_key` → `409 fare_already_used`.
+  - Unknown `fare_id` → `404 fare_not_found`.
+  - Fare booked after real TTL expiry (`FARE_LOCK_TTL_MINUTES=1`, waited past it) → `409 fare_expired`.
+- Test data created during manual verification was cleaned up from the `go_ride` database afterward.
+- Not yet done: committing/pushing the `go-ride-kafka-consumers` changes (dependency bump + handler code + this doc update).
 
 **Verification**
 1. Schema verification

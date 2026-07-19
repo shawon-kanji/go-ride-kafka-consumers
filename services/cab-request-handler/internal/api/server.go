@@ -24,6 +24,19 @@ const (
 	requestStatusSearchStarted = "search_started"
 	maxRequestBodyBytes        = 1 << 20
 	requestRoute               = "/request-cab"
+	currentTripRoute           = "/current-trip"
+	fareEstimateRoute          = "/fare-estimate"
+)
+
+var (
+	activeTripRequestStatuses = []string{"search_started", "searching", "offered", "driver_accepted", "driver_rejected"}
+	activeOngoingTripStatuses = []string{"assigned", "driver_arriving", "in_progress"}
+)
+
+var (
+	errFareNotFound    = errors.New("fare_not_found")
+	errFareExpired     = errors.New("fare_expired")
+	errFareAlreadyUsed = errors.New("fare_already_used")
 )
 
 type Server struct {
@@ -35,14 +48,39 @@ type Server struct {
 
 type createCabRequestRequest struct {
 	RiderID        string    `json:"rider_id"`
-	PickupLat      float64   `json:"pickup_lat"`
-	PickupLng      float64   `json:"pickup_lng"`
-	DropoffLat     float64   `json:"dropoff_lat"`
-	DropoffLng     float64   `json:"dropoff_lng"`
-	SearchRadiusKM float64   `json:"search_radius_km,omitempty"`
+	FareID         string    `json:"fare_id"`
 	IdempotencyKey string    `json:"idempotency_key,omitempty"`
 	CorrelationID  string    `json:"correlation_id,omitempty"`
 	RequestedAt    time.Time `json:"requested_at,omitempty"`
+}
+
+type fareEstimateRequest struct {
+	RiderID        string  `json:"rider_id"`
+	PickupLat      float64 `json:"pickup_lat"`
+	PickupLng      float64 `json:"pickup_lng"`
+	DropoffLat     float64 `json:"dropoff_lat"`
+	DropoffLng     float64 `json:"dropoff_lng"`
+	SearchRadiusKM float64 `json:"search_radius_km,omitempty"`
+}
+
+type fareEstimateResponse struct {
+	FareID          string    `json:"fare_id"`
+	CurrencyCode    string    `json:"currency_code"`
+	BaseFare        float64   `json:"base_fare"`
+	DistanceFare    float64   `json:"distance_fare"`
+	TimeFare        float64   `json:"time_fare"`
+	SurchargeTotal  float64   `json:"surcharge_total"`
+	DiscountTotal   float64   `json:"discount_total"`
+	SurgeMultiplier float64   `json:"surge_multiplier"`
+	TotalFare       float64   `json:"total_fare"`
+	PricingVersion  string    `json:"pricing_version"`
+	LockedAt        time.Time `json:"locked_at"`
+	ExpiresAt       time.Time `json:"expires_at,omitempty"`
+}
+
+type errorResponse struct {
+	Error   string `json:"error"`
+	Message string `json:"message"`
 }
 
 type createCabRequestResponse struct {
@@ -63,6 +101,58 @@ type requestBundle struct {
 	fare    schemamodels.TripFare
 }
 
+type currentTripResponse struct {
+	RiderID          string              `json:"rider_id"`
+	HasActiveRequest bool                `json:"has_active_request"`
+	HasOngoingTrip   bool                `json:"has_ongoing_trip"`
+	TripRequest      *tripRequestPayload `json:"trip_request,omitempty"`
+	OngoingTrip      *ongoingTripPayload `json:"ongoing_trip,omitempty"`
+}
+
+type tripRequestPayload struct {
+	RequestID      string       `json:"request_id"`
+	TripID         string       `json:"trip_id"`
+	Status         string       `json:"status"`
+	PickupLat      float64      `json:"pickup_lat"`
+	PickupLng      float64      `json:"pickup_lng"`
+	DropoffLat     float64      `json:"dropoff_lat"`
+	DropoffLng     float64      `json:"dropoff_lng"`
+	SearchRadiusKM float64      `json:"search_radius_km"`
+	RequestedAt    time.Time    `json:"requested_at"`
+	Fare           *farePayload `json:"fare,omitempty"`
+}
+
+type farePayload struct {
+	FareID          string     `json:"fare_id"`
+	CurrencyCode    string     `json:"currency_code"`
+	BaseFare        float64    `json:"base_fare"`
+	DistanceFare    float64    `json:"distance_fare"`
+	TimeFare        float64    `json:"time_fare"`
+	SurchargeTotal  float64    `json:"surcharge_total"`
+	DiscountTotal   float64    `json:"discount_total"`
+	SurgeMultiplier float64    `json:"surge_multiplier"`
+	TotalFare       float64    `json:"total_fare"`
+	PricingVersion  string     `json:"pricing_version"`
+	LockedAt        time.Time  `json:"locked_at"`
+	ExpiresAt       *time.Time `json:"expires_at,omitempty"`
+}
+
+type ongoingTripPayload struct {
+	TripRecordID string     `json:"trip_record_id"`
+	RequestID    string     `json:"request_id"`
+	TripID       string     `json:"trip_id"`
+	DriverID     string     `json:"driver_id"`
+	Status       string     `json:"status"`
+	PickupLat    float64    `json:"pickup_lat"`
+	PickupLng    float64    `json:"pickup_lng"`
+	DropoffLat   float64    `json:"dropoff_lat"`
+	DropoffLng   float64    `json:"dropoff_lng"`
+	AssignedAt   time.Time  `json:"assigned_at"`
+	StartedAt    *time.Time `json:"started_at,omitempty"`
+	CompletedAt  *time.Time `json:"completed_at,omitempty"`
+	CancelledAt  *time.Time `json:"cancelled_at,omitempty"`
+}
+
 func NewServer(cfg config.Config, db *gorm.DB, producer kafka.Producer) *Server {
 	server := &Server{
 		cfg:      cfg,
@@ -73,6 +163,8 @@ func NewServer(cfg config.Config, db *gorm.DB, producer kafka.Producer) *Server 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", server.handleHealthz)
 	mux.HandleFunc(requestRoute, server.handleCreateCabRequest)
+	mux.HandleFunc(currentTripRoute, server.handleCurrentTrip)
+	mux.HandleFunc(fareEstimateRoute, server.handleFareEstimate)
 
 	server.http = &http.Server{
 		Addr:              cfg.HTTPAddr,
@@ -155,17 +247,23 @@ func (s *Server) handleCreateCabRequest(w http.ResponseWriter, r *http.Request) 
 	if requestedAt.IsZero() {
 		requestedAt = now
 	}
-	if req.SearchRadiusKM <= 0 {
-		req.SearchRadiusKM = s.cfg.DefaultSearchRadiusKM
-	}
 	if req.CorrelationID == "" {
 		req.CorrelationID = uuid.NewString()
 	}
 
 	bundle, err := s.createOrLoadCabRequest(r.Context(), req, requestedAt, now)
 	if err != nil {
-		log.Printf("persist cab request rider_id=%s: %v", req.RiderID, err)
-		http.Error(w, "failed to create cab request", http.StatusInternalServerError)
+		switch {
+		case errors.Is(err, errFareNotFound):
+			writeJSONError(w, http.StatusNotFound, "fare_not_found", "fare_id was not found")
+		case errors.Is(err, errFareExpired):
+			writeJSONError(w, http.StatusConflict, "fare_expired", "fare quote has expired; request a new fare estimate")
+		case errors.Is(err, errFareAlreadyUsed):
+			writeJSONError(w, http.StatusConflict, "fare_already_used", "fare_id has already been booked")
+		default:
+			log.Printf("persist cab request rider_id=%s: %v", req.RiderID, err)
+			http.Error(w, "failed to create cab request", http.StatusInternalServerError)
+		}
 		return
 	}
 
@@ -197,37 +295,213 @@ func (s *Server) handleCreateCabRequest(w http.ResponseWriter, r *http.Request) 
 	log.Printf("accepted cab request request_id=%s trip_id=%s status=%s", response.RequestID, response.TripID, response.Status)
 }
 
+func (s *Server) handleFareEstimate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req fareEstimateRequest
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBodyBytes))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("invalid request body: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	if err := validateFareEstimateRequest(req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	riderID, err := uuid.Parse(req.RiderID)
+	if err != nil {
+		http.Error(w, "rider_id must be a valid UUID", http.StatusBadRequest)
+		return
+	}
+
+	if req.SearchRadiusKM <= 0 {
+		req.SearchRadiusKM = s.cfg.DefaultSearchRadiusKM
+	}
+
+	now := time.Now().UTC()
+	fare := s.buildFareEstimate(riderID, req, now)
+	if err := s.db.WithContext(r.Context()).Create(&fare).Error; err != nil {
+		log.Printf("persist fare estimate rider_id=%s: %v", req.RiderID, err)
+		http.Error(w, "failed to create fare estimate", http.StatusInternalServerError)
+		return
+	}
+
+	response := fareEstimateResponse{
+		FareID:          fare.ID.String(),
+		CurrencyCode:    fare.CurrencyCode,
+		BaseFare:        fare.BaseFare,
+		DistanceFare:    fare.DistanceFare,
+		TimeFare:        fare.TimeFare,
+		SurchargeTotal:  fare.SurchargeTotal,
+		DiscountTotal:   fare.DiscountTotal,
+		SurgeMultiplier: fare.SurgeMultiplier,
+		TotalFare:       fare.TotalFare,
+		PricingVersion:  fare.PricingVersion,
+		LockedAt:        fare.LockedAt,
+	}
+	if fare.ExpiresAt != nil {
+		response.ExpiresAt = *fare.ExpiresAt
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(response)
+	log.Printf("created fare estimate fare_id=%s rider_id=%s", response.FareID, req.RiderID)
+}
+
+func (s *Server) handleCurrentTrip(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	riderIDValue := strings.TrimSpace(r.URL.Query().Get("rider_id"))
+	if riderIDValue == "" {
+		http.Error(w, "rider_id is required", http.StatusBadRequest)
+		return
+	}
+
+	riderID, err := uuid.Parse(riderIDValue)
+	if err != nil {
+		http.Error(w, "rider_id must be a valid UUID", http.StatusBadRequest)
+		return
+	}
+
+	tripRequest, fare, err := s.loadLatestActiveTripRequest(r.Context(), riderID)
+	if err != nil {
+		log.Printf("load active trip request rider_id=%s: %v", riderID, err)
+		http.Error(w, "failed to load current trip state", http.StatusInternalServerError)
+		return
+	}
+
+	ongoingTrip, err := s.loadLatestOngoingTrip(r.Context(), riderID)
+	if err != nil {
+		log.Printf("load ongoing trip rider_id=%s: %v", riderID, err)
+		http.Error(w, "failed to load current trip state", http.StatusInternalServerError)
+		return
+	}
+
+	response := currentTripResponse{
+		RiderID:          riderID.String(),
+		HasActiveRequest: tripRequest != nil,
+		HasOngoingTrip:   ongoingTrip != nil,
+	}
+
+	if tripRequest != nil {
+		requestPayload := &tripRequestPayload{
+			RequestID:      tripRequest.ID.String(),
+			TripID:         tripRequest.TripID.String(),
+			Status:         tripRequest.Status,
+			PickupLat:      tripRequest.PickupLat,
+			PickupLng:      tripRequest.PickupLng,
+			DropoffLat:     tripRequest.DropoffLat,
+			DropoffLng:     tripRequest.DropoffLng,
+			SearchRadiusKM: tripRequest.SearchRadiusKM,
+			RequestedAt:    tripRequest.RequestedAt,
+		}
+		if fare != nil {
+			requestPayload.Fare = &farePayload{
+				FareID:          fare.ID.String(),
+				CurrencyCode:    fare.CurrencyCode,
+				BaseFare:        fare.BaseFare,
+				DistanceFare:    fare.DistanceFare,
+				TimeFare:        fare.TimeFare,
+				SurchargeTotal:  fare.SurchargeTotal,
+				DiscountTotal:   fare.DiscountTotal,
+				SurgeMultiplier: fare.SurgeMultiplier,
+				TotalFare:       fare.TotalFare,
+				PricingVersion:  fare.PricingVersion,
+				LockedAt:        fare.LockedAt,
+				ExpiresAt:       fare.ExpiresAt,
+			}
+		}
+		response.TripRequest = requestPayload
+	}
+
+	if ongoingTrip != nil {
+		response.OngoingTrip = &ongoingTripPayload{
+			TripRecordID: ongoingTrip.ID.String(),
+			RequestID:    ongoingTrip.RequestID.String(),
+			TripID:       ongoingTrip.TripID.String(),
+			DriverID:     ongoingTrip.DriverID.String(),
+			Status:       ongoingTrip.Status,
+			PickupLat:    ongoingTrip.PickupLat,
+			PickupLng:    ongoingTrip.PickupLng,
+			DropoffLat:   ongoingTrip.DropoffLat,
+			DropoffLng:   ongoingTrip.DropoffLng,
+			AssignedAt:   ongoingTrip.AssignedAt,
+			StartedAt:    ongoingTrip.StartedAt,
+			CompletedAt:  ongoingTrip.CompletedAt,
+			CancelledAt:  ongoingTrip.CancelledAt,
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(response)
+}
+
+func (s *Server) loadLatestActiveTripRequest(ctx context.Context, riderID uuid.UUID) (*schemamodels.TripRequest, *schemamodels.TripFare, error) {
+	var request schemamodels.TripRequest
+	err := s.db.WithContext(ctx).
+		Where("rider_id = ? AND status IN ?", riderID, activeTripRequestStatuses).
+		Order("requested_at DESC").
+		Take(&request).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil, nil
+	}
+	if err != nil {
+		return nil, nil, fmt.Errorf("query active trip request: %w", err)
+	}
+
+	if request.FareID == nil {
+		return &request, nil, nil
+	}
+
+	var fare schemamodels.TripFare
+	err = s.db.WithContext(ctx).Where("fare_id = ?", *request.FareID).Take(&fare).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return &request, nil, nil
+	}
+	if err != nil {
+		return nil, nil, fmt.Errorf("query trip fare fare_id=%s: %w", request.FareID.String(), err)
+	}
+
+	return &request, &fare, nil
+}
+
+func (s *Server) loadLatestOngoingTrip(ctx context.Context, riderID uuid.UUID) (*schemamodels.OngoingTrip, error) {
+	var ongoingTrip schemamodels.OngoingTrip
+	err := s.db.WithContext(ctx).
+		Where("rider_id = ? AND status IN ?", riderID, activeOngoingTripStatuses).
+		Order("assigned_at DESC").
+		Take(&ongoingTrip).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("query ongoing trip: %w", err)
+	}
+
+	return &ongoingTrip, nil
+}
+
 func (s *Server) createOrLoadCabRequest(ctx context.Context, req createCabRequestRequest, requestedAt, now time.Time) (requestBundle, error) {
 	riderID, err := uuid.Parse(req.RiderID)
 	if err != nil {
 		return requestBundle{}, fmt.Errorf("parse rider_id: %w", err)
 	}
 
-	searchRadiusKM := req.SearchRadiusKM
-	if searchRadiusKM <= 0 {
-		searchRadiusKM = s.cfg.DefaultSearchRadiusKM
-	}
-
-	requestID := uuid.New()
-	tripID := uuid.New()
-	request := schemamodels.TripRequest{
-		ID:              requestID,
-		TripID:          tripID,
-		RiderID:         riderID,
-		Status:          requestStatusSearchStarted,
-		PickupLat:       req.PickupLat,
-		PickupLng:       req.PickupLng,
-		DropoffLat:      req.DropoffLat,
-		DropoffLng:      req.DropoffLng,
-		PickupGeohash:   geohashFromLatLng(req.PickupLat, req.PickupLng),
-		PickupS2CellID:  s2CellIDFromLatLng(req.PickupLat, req.PickupLng),
-		SearchRadiusKM:  searchRadiusKM,
-		RequestedAt:     requestedAt,
-		SearchStartedAt: &now,
-		CorrelationID:   stringPtr(req.CorrelationID),
-		IdempotencyKey:  stringPtr(req.IdempotencyKey),
-		CreatedAt:       now,
-		UpdatedAt:       now,
+	fareID, err := uuid.Parse(req.FareID)
+	if err != nil {
+		return requestBundle{}, fmt.Errorf("parse fare_id: %w", err)
 	}
 
 	var bundle requestBundle
@@ -236,7 +510,7 @@ func (s *Server) createOrLoadCabRequest(ctx context.Context, req createCabReques
 			var existing schemamodels.TripRequest
 			err := tx.Where("rider_id = ? AND idempotency_key = ?", riderID, req.IdempotencyKey).Take(&existing).Error
 			if err == nil {
-				fare, loadErr := loadTripFareByRequestID(tx, existing.ID)
+				fare, loadErr := loadTripFareByID(tx, *existing.FareID)
 				if loadErr != nil {
 					return loadErr
 				}
@@ -249,37 +523,73 @@ func (s *Server) createOrLoadCabRequest(ctx context.Context, req createCabReques
 			}
 		}
 
-		result := tx.Create(&request)
-		if result.Error != nil {
+		var fare schemamodels.TripFare
+		err := tx.Where("fare_id = ?", fareID).Take(&fare).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return errFareNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("load trip fare fare_id=%s: %w", fareID, err)
+		}
+		if fare.RiderID != riderID {
+			return errFareNotFound
+		}
+		if fare.IsConsumed() {
+			return errFareAlreadyUsed
+		}
+		if fare.IsExpired(now) {
+			return errFareExpired
+		}
+
+		requestID := uuid.New()
+		request := schemamodels.TripRequest{
+			ID:              requestID,
+			TripID:          uuid.New(),
+			RiderID:         riderID,
+			FareID:          &fareID,
+			Status:          requestStatusSearchStarted,
+			PickupLat:       fare.PickupLat,
+			PickupLng:       fare.PickupLng,
+			DropoffLat:      fare.DropoffLat,
+			DropoffLng:      fare.DropoffLng,
+			PickupGeohash:   fare.PickupGeohash,
+			PickupS2CellID:  fare.PickupS2CellID,
+			SearchRadiusKM:  fare.SearchRadiusKM,
+			RequestedAt:     requestedAt,
+			SearchStartedAt: &now,
+			CorrelationID:   stringPtr(req.CorrelationID),
+			IdempotencyKey:  stringPtr(req.IdempotencyKey),
+			CreatedAt:       now,
+			UpdatedAt:       now,
+		}
+
+		if err := tx.Create(&request).Error; err != nil {
 			if req.IdempotencyKey != "" {
 				var existing schemamodels.TripRequest
-				if err := tx.Where("rider_id = ? AND idempotency_key = ?", riderID, req.IdempotencyKey).Take(&existing).Error; err == nil {
-					fare, loadErr := loadTripFareByRequestID(tx, existing.ID)
+				if lookupErr := tx.Where("rider_id = ? AND idempotency_key = ?", riderID, req.IdempotencyKey).Take(&existing).Error; lookupErr == nil {
+					existingFare, loadErr := loadTripFareByID(tx, *existing.FareID)
 					if loadErr != nil {
 						return loadErr
 					}
-					bundle = requestBundle{request: existing, fare: fare}
+					bundle = requestBundle{request: existing, fare: existingFare}
 					return nil
 				}
 			}
 
-			return fmt.Errorf("create trip request: %w", result.Error)
+			return fmt.Errorf("create trip request: %w", err)
 		}
 
-		fare := s.buildTripFare(request.ID, req, now)
-		if err := tx.Create(&fare).Error; err != nil {
-			return fmt.Errorf("create trip fare: %w", err)
+		result := tx.Model(&schemamodels.TripFare{}).
+			Where("fare_id = ? AND request_id IS NULL", fareID).
+			Updates(map[string]any{"request_id": requestID, "updated_at": now})
+		if result.Error != nil {
+			return fmt.Errorf("claim trip fare: %w", result.Error)
+		}
+		if result.RowsAffected == 0 {
+			return errFareAlreadyUsed
 		}
 
-		fareID := fare.ID
-		if err := tx.Model(&request).Where("request_id = ?", request.ID).Updates(map[string]any{
-			"fare_id":    fareID,
-			"updated_at": now,
-		}).Error; err != nil {
-			return fmt.Errorf("attach fare to trip request: %w", err)
-		}
-
-		request.FareID = &fareID
+		fare.RequestID = &requestID
 		bundle = requestBundle{request: request, fare: fare}
 		return nil
 	}); err != nil {
@@ -289,7 +599,7 @@ func (s *Server) createOrLoadCabRequest(ctx context.Context, req createCabReques
 	return bundle, nil
 }
 
-func (s *Server) buildTripFare(requestID uuid.UUID, req createCabRequestRequest, now time.Time) schemamodels.TripFare {
+func (s *Server) buildFareEstimate(riderID uuid.UUID, req fareEstimateRequest, now time.Time) schemamodels.TripFare {
 	distanceKM := haversineKM(req.PickupLat, req.PickupLng, req.DropoffLat, req.DropoffLng)
 	estimatedMinutes := 0.0
 	if s.cfg.FareAverageSpeedKPH > 0 {
@@ -311,7 +621,14 @@ func (s *Server) buildTripFare(requestID uuid.UUID, req createCabRequestRequest,
 
 	return schemamodels.TripFare{
 		ID:              uuid.New(),
-		RequestID:       requestID,
+		RiderID:         riderID,
+		PickupLat:       req.PickupLat,
+		PickupLng:       req.PickupLng,
+		DropoffLat:      req.DropoffLat,
+		DropoffLng:      req.DropoffLng,
+		PickupGeohash:   geohashFromLatLng(req.PickupLat, req.PickupLng),
+		PickupS2CellID:  s2CellIDFromLatLng(req.PickupLat, req.PickupLng),
+		SearchRadiusKM:  req.SearchRadiusKM,
 		CurrencyCode:    s.cfg.FareCurrencyCode,
 		BaseFare:        baseFare,
 		DistanceFare:    distanceFare,
@@ -376,6 +693,23 @@ func validateCreateCabRequestRequest(req createCabRequestRequest) error {
 	if _, err := uuid.Parse(req.RiderID); err != nil {
 		return fmt.Errorf("rider_id must be a valid UUID")
 	}
+	if _, err := uuid.Parse(req.FareID); err != nil {
+		return fmt.Errorf("fare_id must be a valid UUID")
+	}
+	if len(req.IdempotencyKey) > 128 {
+		return fmt.Errorf("idempotency_key must be at most 128 characters")
+	}
+	if len(req.CorrelationID) > 128 {
+		return fmt.Errorf("correlation_id must be at most 128 characters")
+	}
+
+	return nil
+}
+
+func validateFareEstimateRequest(req fareEstimateRequest) error {
+	if _, err := uuid.Parse(req.RiderID); err != nil {
+		return fmt.Errorf("rider_id must be a valid UUID")
+	}
 	if req.PickupLat < -90 || req.PickupLat > 90 {
 		return fmt.Errorf("pickup_lat must be between -90 and 90")
 	}
@@ -391,22 +725,22 @@ func validateCreateCabRequestRequest(req createCabRequestRequest) error {
 	if req.SearchRadiusKM < 0 {
 		return fmt.Errorf("search_radius_km must be greater than or equal to 0")
 	}
-	if len(req.IdempotencyKey) > 128 {
-		return fmt.Errorf("idempotency_key must be at most 128 characters")
-	}
-	if len(req.CorrelationID) > 128 {
-		return fmt.Errorf("correlation_id must be at most 128 characters")
-	}
 
 	return nil
 }
 
-func loadTripFareByRequestID(tx *gorm.DB, requestID uuid.UUID) (schemamodels.TripFare, error) {
+func loadTripFareByID(tx *gorm.DB, fareID uuid.UUID) (schemamodels.TripFare, error) {
 	var fare schemamodels.TripFare
-	if err := tx.Where("request_id = ?", requestID).Take(&fare).Error; err != nil {
+	if err := tx.Where("fare_id = ?", fareID).Take(&fare).Error; err != nil {
 		return schemamodels.TripFare{}, fmt.Errorf("load trip fare: %w", err)
 	}
 	return fare, nil
+}
+
+func writeJSONError(w http.ResponseWriter, status int, code, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(errorResponse{Error: code, Message: message})
 }
 
 func haversineKM(lat1, lng1, lat2, lng2 float64) float64 {
