@@ -11,6 +11,7 @@ Current completion status:
 - Phase 1 completed as design/spec.
 - Phase 2 completed in `go-ride-db-schema` with migrations applied.
 - Phase 3 completed in `go-ride-db-schema`, tagged as `v0.2.0`, and adopted in `go-ride-kafka-consumers` root and `services/location-consumers` modules.
+- Phase 4 completed in `go-ride-kafka-consumers` with the new `services/cab-request-handler` HTTP producer service.
 
 **Steps**
 1. Phase 1 - Domain contracts and status model (blocks all later phases) [completed]
@@ -80,7 +81,7 @@ Current completion status:
    - Current model convention: use `ID` for primary key struct fields while preserving explicit `gorm:"column:..."` mappings.
    - Release status: schema package published as `v0.2.0`.
 
-4. Phase 4 - Cab request API service (depends on 3)
+4. Phase 4 - Cab request API service (depends on 3) [completed]
    - Create new service module `services/cab-request-handler` (API + Kafka producer + DB access), following existing location-producers structure.
    - Endpoint: POST request for cab; validate payload; compute preliminary fare lock (create `trip_fares` record) and create `trip_requests` row with `status=search_started`, `fare_id` nullable until locked record exists.
    - Publish `ride.requested.v1` with request metadata and location fields to Kafka.
@@ -129,6 +130,9 @@ Current completion status:
 - /Users/shawonkanji/Documents/projects/go-ride-kafka-consumers/services/trip-dispatch-worker/internal/bootstrap/app.go — wire DB, consumer, producers, and gateway client dependencies.
 - /Users/shawonkanji/Documents/projects/go-ride-kafka-consumers/services/trip-dispatch-worker/internal/config/config.go — add DB, websocket/gateway, and timeout/retry configuration knobs.
 - /Users/shawonkanji/Documents/projects/go-ride-kafka-consumers/services/trip-dispatch-worker/pkg/events/ride_request.go — extend event contract with request metadata/fare lock fields.
+- /Users/shawonkanji/Documents/projects/go-ride-kafka-consumers/services/cab-request-handler/internal/api/server.go — HTTP request handler that persists cab requests and publishes `ride.requested.v1`.
+- /Users/shawonkanji/Documents/projects/go-ride-kafka-consumers/services/cab-request-handler/internal/kafka/producer.go — Kafka producer used by the cab request API.
+- /Users/shawonkanji/Documents/projects/go-ride-kafka-consumers/services/cab-request-handler/internal/bootstrap/app.go — wires config, DB, Kafka producer, and HTTP server.
 - /Users/shawonkanji/Documents/projects/go-ride-kafka-consumers/Makefile — add build/test/run targets for new cab-request-handler and realtime gateway services.
 - /Users/shawonkanji/Documents/projects/go-ride-kafka-consumers/go.work — include new modules under services.
 - go-ride-db-schema/migrations/* — add ordered migration files for trip requests, offers, fares, surcharges, ongoing, history.

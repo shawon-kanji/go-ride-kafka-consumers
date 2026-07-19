@@ -3,5 +3,6 @@ go 1.25.3
 use (
 	./services/location-producers
 	./services/location-consumers
+	./services/cab-request-handler
 	./services/trip-dispatch-worker
 )

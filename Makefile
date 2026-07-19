@@ -7,8 +7,8 @@ RIDE_ASSIGNED_TOPIC ?= ride.assigned.v1
 RIDE_UNASSIGNED_TOPIC ?= ride.unassigned.v1
 
 .PHONY: up down restart logs ps topic-create topic-list topic-delete topic-create-all migrate-up migrate-down migrate-version \
-	build-location build-location-producers build-location-consumers build-dispatch test-location test-dispatch \
-	run-location-producers run-location-consumers run-dispatch-api run-dispatch-consumer
+	build-location build-location-producers build-location-consumers build-cab build-cab-request-handler build-dispatch test-location test-cab test-cab-request-handler test-dispatch \
+	run-location-producers run-location-consumers run-cab-request-handler run-dispatch-api run-dispatch-consumer
 
 up:
 	$(COMPOSE) up -d
@@ -52,11 +52,17 @@ build-location:
 	$(MAKE) build-location-producers
 	$(MAKE) build-location-consumers
 
+build-cab:
+	$(MAKE) build-cab-request-handler
+
 build-location-producers:
 	cd services/location-producers && go build ./...
 
 build-location-consumers:
 	cd services/location-consumers && go build ./...
+
+build-cab-request-handler:
+	cd services/cab-request-handler && go build ./...
 
 build-dispatch:
 	cd services/trip-dispatch-worker && go build ./...
@@ -64,6 +70,12 @@ build-dispatch:
 test-location:
 	cd services/location-producers && go test ./...
 	cd services/location-consumers && go test ./...
+
+test-cab:
+	$(MAKE) test-cab-request-handler
+
+test-cab-request-handler:
+	cd services/cab-request-handler && go test ./...
 
 test-dispatch:
 	cd services/trip-dispatch-worker && go test ./...
@@ -73,6 +85,9 @@ run-location-producers:
 
 run-location-consumers:
 	cd services/location-consumers && go run ./cmd/consumer
+
+run-cab-request-handler:
+	cd services/cab-request-handler && go run ./cmd/api
 
 run-dispatch-api:
 	cd services/trip-dispatch-worker && go run ./cmd/api
