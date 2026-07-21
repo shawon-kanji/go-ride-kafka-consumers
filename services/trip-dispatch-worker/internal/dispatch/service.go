@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"go-ride-kafka-consumers/services/trip-dispatch-worker/internal/config"
@@ -21,7 +22,7 @@ import (
 // message rather than retrying indefinitely.
 var ErrRequestNotFound = errors.New("trip request not found")
 
-const nearestDriversQuery = `
+const nearestDriversQueryTemplate = `
 WITH candidate_distances AS (
     SELECT
         dl.driver_id,
@@ -36,6 +37,7 @@ WITH candidate_distances AS (
         ) AS distance_km
     FROM driver_locations dl
     WHERE dl.recorded_at >= ?
+      %s
 )
 SELECT cd.driver_id, cd.distance_km
 FROM candidate_distances cd
@@ -48,6 +50,35 @@ WHERE cd.distance_km <= ?
 ORDER BY cd.distance_km ASC
 LIMIT ?
 `
+
+// buildNearestDriversQuery returns the query text and the s2_cell_id
+// BETWEEN args (interleaved min, max per covering cell) to prepend before the
+// distance_km/status/limit args. The S2 covering pre-filters driver_locations
+// via its indexed, now-numeric s2_cell_id column before any Haversine trig is
+// computed; it's an over-approximation of the search disc, so the exact
+// distance_km <= radius filter downstream still does the final cut. If the
+// covering is empty (shouldn't happen for a valid radius, but defensive),
+// the geo pre-filter is skipped and the query falls back to a full scan of
+// fresh driver_locations rows.
+func buildNearestDriversQuery(mins, maxs []string) (string, []any) {
+	if len(mins) == 0 {
+		return fmt.Sprintf(nearestDriversQueryTemplate, ""), nil
+	}
+
+	var clauses strings.Builder
+	clauses.WriteString("AND (")
+	args := make([]any, 0, len(mins)*2)
+	for i := range mins {
+		if i > 0 {
+			clauses.WriteString(" OR ")
+		}
+		clauses.WriteString("(dl.s2_cell_id BETWEEN ? AND ?)")
+		args = append(args, mins[i], maxs[i])
+	}
+	clauses.WriteString(")")
+
+	return fmt.Sprintf(nearestDriversQueryTemplate, clauses.String()), args
+}
 
 type driverCandidate struct {
 	DriverID   uuid.UUID `gorm:"column:driver_id"`
@@ -98,15 +129,16 @@ func (s *Service) AttemptDispatch(ctx context.Context, requestID uuid.UUID) erro
 		now := time.Now().UTC()
 		freshSince := now.Add(-s.cfg.DriverLocationFreshWindow)
 
+		coveringMins, coveringMaxs := s2CoveringRanges(req.PickupLat, req.PickupLng, radius)
+		query, coveringArgs := buildNearestDriversQuery(coveringMins, coveringMaxs)
+
+		args := make([]any, 0, 8+len(coveringArgs))
+		args = append(args, req.PickupLat, req.PickupLng, req.PickupLat, freshSince)
+		args = append(args, coveringArgs...)
+		args = append(args, radius, schemamodels.ActiveOngoingTripStatuses(), s.cfg.NearestDriversLimit)
+
 		var candidates []driverCandidate
-		if err := tx.Raw(
-			nearestDriversQuery,
-			req.PickupLat, req.PickupLng, req.PickupLat,
-			freshSince,
-			radius,
-			schemamodels.ActiveOngoingTripStatuses(),
-			s.cfg.NearestDriversLimit,
-		).Scan(&candidates).Error; err != nil {
+		if err := tx.Raw(query, args...).Scan(&candidates).Error; err != nil {
 			return fmt.Errorf("query nearest drivers request_id=%s: %w", requestID, err)
 		}
 
