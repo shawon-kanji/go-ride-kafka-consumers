@@ -1,27 +1,20 @@
 // Package presence provides the cross-instance routing layer for the
 // realtime gateway: any gateway instance's Kafka consumer can receive a job
-// offer for a driver connected to a *different* instance, so Redis pub/sub
-// fans the notification out to all instances, and only the one actually
-// holding that driver's websocket connection acts on it. This is what lets
-// the gateway run as multiple pods (e.g. on EKS) without sticky routing.
+// offer batch for drivers connected to *other* instances, so Redis pub/sub
+// fans the whole batch out to all instances, and each instance filters it
+// against its own local connections — only the one actually holding a given
+// driver's websocket does anything with that entry. This is what lets the
+// gateway run as multiple pods (e.g. on EKS) without sticky routing, and
+// without needing to know in advance which instance holds which driver.
 package presence
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 
 	"github.com/redis/go-redis/v9"
 )
-
-// Notification is the pub/sub envelope. Payload is opaque here (an
-// already-marshaled internal/ws.JobOfferMessage) so this package stays
-// decoupled from the websocket wire format.
-type Notification struct {
-	DriverID string          `json:"driver_id"`
-	Payload  json.RawMessage `json:"payload"`
-}
 
 type Bus struct {
 	client  *redis.Client
@@ -37,21 +30,20 @@ func NewBus(addr, password string, db int, channel string) *Bus {
 	return &Bus{client: client, channel: channel}
 }
 
-func (b *Bus) Publish(ctx context.Context, driverID string, payload []byte) error {
-	notification := Notification{DriverID: driverID, Payload: payload}
-	data, err := json.Marshal(notification)
-	if err != nil {
-		return fmt.Errorf("marshal presence notification: %w", err)
-	}
-	if err := b.client.Publish(ctx, b.channel, data).Err(); err != nil {
-		return fmt.Errorf("publish presence notification driver_id=%s: %w", driverID, err)
+// Publish broadcasts payload to every subscribed gateway instance as-is —
+// this package doesn't parse it, so callers are free to publish a whole
+// batch (e.g. a JobOfferV1) rather than one message per driver.
+func (b *Bus) Publish(ctx context.Context, payload []byte) error {
+	if err := b.client.Publish(ctx, b.channel, payload).Err(); err != nil {
+		return fmt.Errorf("publish presence broadcast: %w", err)
 	}
 	return nil
 }
 
-// Subscribe blocks, delivering each notification to handler, until ctx is
-// canceled. Every gateway instance subscribes to the same channel.
-func (b *Bus) Subscribe(ctx context.Context, handler func(Notification)) error {
+// Subscribe blocks, delivering each broadcast's raw payload to handler,
+// until ctx is canceled. Every gateway instance subscribes to the same
+// channel and receives every broadcast.
+func (b *Bus) Subscribe(ctx context.Context, handler func(payload []byte)) error {
 	sub := b.client.Subscribe(ctx, b.channel)
 	defer func() {
 		if err := sub.Close(); err != nil {
@@ -68,12 +60,7 @@ func (b *Bus) Subscribe(ctx context.Context, handler func(Notification)) error {
 			if !ok {
 				return nil
 			}
-			var notification Notification
-			if err := json.Unmarshal([]byte(msg.Payload), &notification); err != nil {
-				log.Printf("driver_realtime_gateway: discard unparseable presence notification: %v", err)
-				continue
-			}
-			handler(notification)
+			handler([]byte(msg.Payload))
 		}
 	}
 }

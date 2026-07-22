@@ -5,15 +5,16 @@ import (
 	"encoding/json"
 	"log"
 
-	"go-ride-kafka-consumers/services/driver-realtime-gateway/internal/presence"
 	"go-ride-kafka-consumers/services/driver-realtime-gateway/internal/ws"
+	"go-ride-kafka-consumers/services/driver-realtime-gateway/pkg/events"
 
 	"github.com/google/uuid"
 )
 
-// Deliverer handles every presence.Notification received from Redis on this
-// instance. Most calls are a no-op: only the instance actually holding the
-// target driver's connection has anything to deliver.
+// Deliverer handles every job offer batch broadcast received from Redis on
+// this instance. For each offer entry in the batch, most calls are a no-op:
+// only the instance actually holding that entry's driver connection has
+// anything to deliver.
 type Deliverer struct {
 	hub   *ws.Hub
 	store *Store
@@ -23,40 +24,63 @@ func NewDeliverer(hub *ws.Hub, store *Store) *Deliverer {
 	return &Deliverer{hub: hub, store: store}
 }
 
-func (d *Deliverer) HandleNotification(ctx context.Context, notification presence.Notification) {
-	driverID, err := uuid.Parse(notification.DriverID)
-	if err != nil {
-		log.Printf("driver_realtime_gateway: discard notification with invalid driver_id=%q: %v", notification.DriverID, err)
+func (d *Deliverer) HandleBroadcast(ctx context.Context, payload []byte) {
+	var event events.JobOfferV1
+	if err := json.Unmarshal(payload, &event); err != nil {
+		log.Printf("driver_realtime_gateway: discard unparseable job offer broadcast: %v", err)
 		return
 	}
 
-	conns := d.hub.ConnectionsForDriver(driverID)
-	if len(conns) == 0 {
-		return
-	}
-
-	var message ws.JobOfferMessage
-	if err := json.Unmarshal(notification.Payload, &message); err != nil {
-		log.Printf("driver_realtime_gateway: discard unparseable notification payload driver_id=%s: %v", driverID, err)
-		return
-	}
-
-	delivered := false
-	for _, conn := range conns {
-		if conn.Send(notification.Payload) {
-			delivered = true
+	for _, entry := range event.Offers {
+		driverID, err := uuid.Parse(entry.DriverID)
+		if err != nil {
+			log.Printf("driver_realtime_gateway: discard offer with invalid driver_id=%q job_offer_id=%s: %v", entry.DriverID, entry.JobOfferID, err)
+			continue
 		}
-	}
-	if !delivered {
-		return
-	}
 
-	jobOfferID, err := uuid.Parse(message.JobOfferID)
-	if err != nil {
-		log.Printf("driver_realtime_gateway: invalid job_offer_id in notification driver_id=%s: %v", driverID, err)
-		return
-	}
-	if err := d.store.MarkSent(ctx, jobOfferID); err != nil {
-		log.Printf("driver_realtime_gateway: mark sent failed job_offer_id=%s: %v", jobOfferID, err)
+		conns := d.hub.ConnectionsForDriver(driverID)
+		if len(conns) == 0 {
+			continue
+		}
+
+		message := ws.NewJobOfferMessage(ws.JobOfferParams{
+			JobOfferID:       entry.JobOfferID,
+			RequestID:        event.RequestID,
+			TripID:           event.TripID,
+			OfferRank:        entry.OfferRank,
+			PickupLat:        event.PickupLat,
+			PickupLng:        event.PickupLng,
+			DropoffLat:       event.DropoffLat,
+			DropoffLng:       event.DropoffLng,
+			EstimatedEarning: event.EstimatedEarning,
+			CurrencyCode:     event.CurrencyCode,
+			ExpiresAt:        entry.ExpiresAt,
+			CorrelationID:    event.CorrelationID,
+		})
+
+		payload, err := json.Marshal(message)
+		if err != nil {
+			log.Printf("driver_realtime_gateway: marshal job offer message failed job_offer_id=%s: %v", entry.JobOfferID, err)
+			continue
+		}
+
+		delivered := false
+		for _, conn := range conns {
+			if conn.Send(payload) {
+				delivered = true
+			}
+		}
+		if !delivered {
+			continue
+		}
+
+		jobOfferID, err := uuid.Parse(entry.JobOfferID)
+		if err != nil {
+			log.Printf("driver_realtime_gateway: invalid job_offer_id=%q: %v", entry.JobOfferID, err)
+			continue
+		}
+		if err := d.store.MarkSent(ctx, jobOfferID); err != nil {
+			log.Printf("driver_realtime_gateway: mark sent failed job_offer_id=%s: %v", entry.JobOfferID, err)
+		}
 	}
 }

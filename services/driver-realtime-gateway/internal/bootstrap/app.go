@@ -81,8 +81,8 @@ func New() (*App, error) {
 
 	go func() {
 		bgCtx := context.Background()
-		if err := bus.Subscribe(bgCtx, func(n presence.Notification) {
-			deliverer.HandleNotification(bgCtx, n)
+		if err := bus.Subscribe(bgCtx, func(payload []byte) {
+			deliverer.HandleBroadcast(bgCtx, payload)
 		}); err != nil {
 			log.Printf("driver_realtime_gateway: presence subscribe stopped: %v", err)
 		}
