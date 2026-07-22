@@ -29,6 +29,7 @@ type Config struct {
 	DispatchBackoffMaxSecs    int
 	JobOfferTTLSeconds        int
 	DispatchSweepInterval     time.Duration
+	DriverCommissionRate      float64
 }
 
 type DBConfig struct {
@@ -96,6 +97,11 @@ func Load(mode string) (Config, error) {
 		return Config{}, fmt.Errorf("invalid DISPATCH_SWEEP_INTERVAL_SECONDS: %w", err)
 	}
 
+	driverCommissionRate, err := getFloatEnv("DRIVER_COMMISSION_RATE", 0.20)
+	if err != nil {
+		return Config{}, fmt.Errorf("invalid DRIVER_COMMISSION_RATE: %w", err)
+	}
+
 	cfg := Config{
 		ServiceName: getEnv("SERVICE_NAME", "trip-dispatch-worker"),
 		Mode:        mode,
@@ -124,6 +130,7 @@ func Load(mode string) (Config, error) {
 		DispatchBackoffMaxSecs:    dispatchBackoffMaxSecs,
 		JobOfferTTLSeconds:        jobOfferTTLSeconds,
 		DispatchSweepInterval:     time.Duration(dispatchSweepIntervalSeconds) * time.Second,
+		DriverCommissionRate:      driverCommissionRate,
 	}
 
 	if len(cfg.KafkaBrokers) == 0 {
@@ -149,6 +156,9 @@ func Load(mode string) (Config, error) {
 	}
 	if cfg.JobOfferTTLSeconds <= 0 {
 		return Config{}, fmt.Errorf("JOB_OFFER_TTL_SECONDS must be greater than zero")
+	}
+	if cfg.DriverCommissionRate < 0 || cfg.DriverCommissionRate >= 1 {
+		return Config{}, fmt.Errorf("DRIVER_COMMISSION_RATE must be in [0, 1)")
 	}
 
 	return cfg, nil

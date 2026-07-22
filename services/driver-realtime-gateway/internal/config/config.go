@@ -29,6 +29,12 @@ type Config struct {
 	PingInterval time.Duration
 	PongWait     time.Duration
 	ReplayBatch  int
+
+	// DriverCommissionRate must match trip-dispatch-worker's
+	// DRIVER_COMMISSION_RATE, since replayed offers recompute the same
+	// estimated_earning that the live push already carried on the
+	// (denormalized) Kafka event.
+	DriverCommissionRate float64
 }
 
 type DBConfig struct {
@@ -66,6 +72,11 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("invalid REPLAY_BATCH_SIZE: %w", err)
 	}
 
+	driverCommissionRate, err := getFloatEnv("DRIVER_COMMISSION_RATE", 0.20)
+	if err != nil {
+		return Config{}, fmt.Errorf("invalid DRIVER_COMMISSION_RATE: %w", err)
+	}
+
 	cfg := Config{
 		ServiceName: getEnv("SERVICE_NAME", "driver-realtime-gateway"),
 		HTTPAddr:    getEnv("HTTP_ADDR", ":8083"),
@@ -94,6 +105,8 @@ func Load() (Config, error) {
 		PingInterval: time.Duration(pingIntervalSeconds) * time.Second,
 		PongWait:     time.Duration(pongWaitSeconds) * time.Second,
 		ReplayBatch:  replayBatch,
+
+		DriverCommissionRate: driverCommissionRate,
 	}
 
 	if len(cfg.KafkaBrokers) == 0 {
@@ -122,6 +135,9 @@ func Load() (Config, error) {
 	}
 	if cfg.ReplayBatch <= 0 {
 		return Config{}, fmt.Errorf("REPLAY_BATCH_SIZE must be greater than zero")
+	}
+	if cfg.DriverCommissionRate < 0 || cfg.DriverCommissionRate >= 1 {
+		return Config{}, fmt.Errorf("DRIVER_COMMISSION_RATE must be in [0, 1)")
 	}
 
 	return cfg, nil
@@ -153,4 +169,12 @@ func getIntEnv(key string, fallback int) (int, error) {
 		return fallback, nil
 	}
 	return strconv.Atoi(value)
+}
+
+func getFloatEnv(key string, fallback float64) (float64, error) {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback, nil
+	}
+	return strconv.ParseFloat(value, 64)
 }

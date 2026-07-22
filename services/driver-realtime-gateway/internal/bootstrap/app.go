@@ -43,7 +43,7 @@ func New() (*App, error) {
 	}
 
 	store := offers.NewStore(gormDB)
-	replayer := offers.NewReplayer(gormDB, store, cfg.ReplayBatch)
+	replayer := offers.NewReplayer(gormDB, store, cfg.ReplayBatch, cfg.DriverCommissionRate)
 
 	hub := ws.NewHub()
 	deliverer := offers.NewDeliverer(hub, store)

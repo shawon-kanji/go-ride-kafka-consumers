@@ -26,16 +26,18 @@ func NewNotifier(bus *presence.Bus) *Notifier {
 func (n *Notifier) HandleJobOfferEvent(ctx context.Context, event events.JobOfferV1) error {
 	for _, entry := range event.Offers {
 		message := ws.NewJobOfferMessage(ws.JobOfferParams{
-			JobOfferID:    entry.JobOfferID,
-			RequestID:     event.RequestID,
-			TripID:        event.TripID,
-			OfferRank:     entry.OfferRank,
-			PickupLat:     event.PickupLat,
-			PickupLng:     event.PickupLng,
-			DropoffLat:    event.DropoffLat,
-			DropoffLng:    event.DropoffLng,
-			ExpiresAt:     entry.ExpiresAt,
-			CorrelationID: event.CorrelationID,
+			JobOfferID:       entry.JobOfferID,
+			RequestID:        event.RequestID,
+			TripID:           event.TripID,
+			OfferRank:        entry.OfferRank,
+			PickupLat:        event.PickupLat,
+			PickupLng:        event.PickupLng,
+			DropoffLat:       event.DropoffLat,
+			DropoffLng:       event.DropoffLng,
+			EstimatedEarning: event.EstimatedEarning,
+			CurrencyCode:     event.CurrencyCode,
+			ExpiresAt:        entry.ExpiresAt,
+			CorrelationID:    event.CorrelationID,
 		})
 
 		payload, err := json.Marshal(message)
