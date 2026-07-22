@@ -119,17 +119,14 @@ Current completion status:
    - Verified live end-to-end: happy path (4 seeded drivers, offers created in correct distance order, `status=offered`); zero-driver path (radius grew 20→25→30 exactly, backoff 2s→4s→8s→16s exactly, timed out after 5 attempts); idempotency guard (re-publishing an already-`offered` request's event is a logged no-op, no duplicate offers). Test data cleaned up afterward.
    - Emitting `ride.assigned.v1`/`ride.unassigned.v1` and driver accept/reject handling are Phase 7, not part of this phase.
 
-6. Phase 6 - Realtime gateway and WebSocket architecture (depends on 3; can run parallel with 4/5)
-   - Introduce dedicated driver realtime gateway service for WebSocket connection management (recommended over embedding in dispatcher).
-   - WebSocket connection model:
-     - One long-lived WebSocket per logged-in driver device session.
-     - Optional second connection for rider tracking channel if needed later.
-     - Presence registry keyed by `driver_id` + `device_id`.
-   - Dispatch integration:
-     - Dispatcher publishes internal notification events (or directly calls gateway queue/topic) with job offers.
-     - Gateway pushes offers to online drivers and records delivery/ack status.
-   - Offline/reconnect behavior:
-     - On reconnect, gateway queries `driver_job_offers` non-expired rows and replays pending offers.
+6. Phase 6 - Realtime gateway and WebSocket architecture (depends on 3; can run parallel with 4/5) [implemented]
+   - New service `services/driver-realtime-gateway`: `gorilla/websocket` connection layer (`internal/ws`), verify-only JWT auth (`internal/auth`, same `Claims{UserID, Email, Role}`/HS256/shared-secret shape as `go-ride-backend/infrastructure/security/jwt.go`), Postgres access via the same `go-ride-db-schema` module (`internal/db`), and a Redis-backed presence fan-out (`internal/presence`) for multi-instance operation.
+   - WebSocket connection model: `GET /ws/driver?token=<jwt>&device_id=<id>` upgrades one long-lived connection per driver device session; local `internal/ws.Hub` keys connections by `driver_id` -> `device_id`. Rider tracking channel remains out of scope (optional/future, per original plan).
+   - Dispatch integration (Kafka, not a direct call): `trip-dispatch-worker`'s `dispatch.Service.AttemptDispatch` publishes a `JobOfferV1` event (topic `driver.job_offer.created.v1`, one event per dispatch attempt, all offers from that attempt batched together, partition key `request_id`) after its DB transaction commits — mirrors the existing publish-after-commit pattern already used by `cab-request-handler`. The gateway's `internal/kafka.OfferConsumer` consumes it and fans each individual offer out over Redis pub/sub (`internal/presence.Bus`, channel `driver-offers`) rather than pushing to its local hub directly, since the consuming instance has no guarantee it holds the target driver's connection — every gateway instance subscribes to the same channel and only the one actually holding that driver's socket delivers it (`internal/offers.Deliverer`). This is what allows the gateway to run as multiple instances/pods (e.g. on Kubernetes/EKS) with no sticky-session requirement.
+   - Delivery/ack tracking: the gateway writes directly to `driver_job_offers.delivery_status`/`delivery_attempts`/`responded_at` (`internal/offers.Store`) — `pending` (set by dispatcher) -> `sent` (gateway, on successful push or replay) -> `delivered`/`seen` (gateway, on matching client ack frame). The `status` column (accepted/rejected/expired/withdrawn) remains exclusively dispatcher-owned; the gateway never writes it. Ack frames also accept `accepted`/`rejected` at the parsing level (so Phase 7 needs no wire-format change) but Phase 6 only records `responded_at` bookkeeping for them — no assignment side effects.
+   - Offline/reconnect behavior: on every successful upgrade (first connect and reconnect handled identically), `internal/offers.Replayer` queries pending, non-expired `driver_job_offers` joined against `trip_requests` (for pickup/dropoff, since those aren't denormalized onto the offer row) and replays them — this DB query, not any in-memory queue, is the durable source of truth.
+   - `offer_version` (a dedupe key named in the Phase 1 frozen decisions) has no backing schema column yet; the wire message hardcodes `offer_version: 1` as a placeholder until real re-offer/reassignment versioning is needed (deferred, likely Phase 7+).
+   - Driver accept/reject business logic (first-wins lock, `trip_requests`/`ongoing_trips` updates, `ride.assigned.v1`/`ride.unassigned.v1` publish) is explicitly Phase 7, not part of this phase.
 
 7. Phase 7 - Driver response handling (depends on 6 and 5)
    - Add driver accept/reject path (WebSocket message commands with HTTP fallback endpoint).
@@ -148,6 +145,13 @@ Current completion status:
    - Deploy cab-request-handler with feature flag to shadow-write before full traffic.
    - Deploy dispatcher in canary mode (subset topics/groups) and verify consistency.
    - Enable realtime gateway fanout incrementally by city/tenant/percentage.
+
+**Completed through Phase 6**
+- `services/driver-realtime-gateway` added as a new `go.work` module: `internal/ws` (hub/connection/server/protocol), `internal/auth` (JWT verify-only), `internal/presence` (Redis pub/sub bus), `internal/offers` (store/replay/notifier/deliverer), `internal/kafka` (`OfferConsumer`), `internal/bootstrap`, `internal/config`, `internal/db`, `pkg/events` (own `JobOfferV1` copy).
+- `trip-dispatch-worker` changes: `internal/kafka/producer.go` (`TripDispatcherProducer.PublishJobOffer`), `internal/config/config.go` (`OfferCreatedTopic`/`KAFKA_OFFER_CREATED_TOPIC`), `pkg/events/job_offer.go` (`JobOfferV1`/`JobOfferEntry`), `internal/dispatch/service.go` (`createOffers` now returns the created offers; `AttemptDispatch` publishes after the transaction commits via `buildJobOfferEvent`), `internal/bootstrap/app.go` (wires the producer into `dispatch.NewService`).
+- Repo-level: `go.work` includes the new module; `Makefile` gained `build-`/`test-`/`run-driver-realtime-gateway` targets and `DRIVER_JOB_OFFER_CREATED_TOPIC` in `topic-create-all`; `docker-compose.yml` gained a `redis` service.
+- All modules (root, `location-producers`, `location-consumers`, `cab-request-handler`, `trip-dispatch-worker`, `driver-realtime-gateway`) build and vet clean.
+- Not yet done: end-to-end manual verification against live Postgres/Kafka/Redis (connect, dispatch, push, ack, replay, multi-instance routing); committing/pushing these changes.
 
 **Relevant files**
 - /Users/shawonkanji/Documents/projects/go-ride-kafka-consumers/services/trip-dispatch-worker/internal/kafka/consumer.go — replace noop behavior with real ride request consumption and dispatch orchestration.

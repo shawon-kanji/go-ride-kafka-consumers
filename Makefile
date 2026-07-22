@@ -5,10 +5,11 @@ LOCATION_TOPIC ?= driver.location.updated.v1
 RIDE_REQUESTED_TOPIC ?= ride.requested.v1
 RIDE_ASSIGNED_TOPIC ?= ride.assigned.v1
 RIDE_UNASSIGNED_TOPIC ?= ride.unassigned.v1
+DRIVER_JOB_OFFER_CREATED_TOPIC ?= driver.job_offer.created.v1
 
 .PHONY: up down restart logs ps topic-create topic-list topic-delete topic-create-all migrate-up migrate-down migrate-version \
-	build-location build-location-producers build-location-consumers build-cab build-cab-request-handler build-dispatch test-location test-cab test-cab-request-handler test-dispatch \
-	run-location-producers run-location-consumers run-cab-request-handler run-dispatch-api run-dispatch-consumer
+	build-location build-location-producers build-location-consumers build-cab build-cab-request-handler build-dispatch build-driver-realtime-gateway test-location test-cab test-cab-request-handler test-dispatch test-driver-realtime-gateway \
+	run-location-producers run-location-consumers run-cab-request-handler run-dispatch-api run-dispatch-consumer run-driver-realtime-gateway
 
 up:
 	$(COMPOSE) up -d
@@ -38,6 +39,7 @@ topic-create-all:
 	$(COMPOSE) exec -T kafka kafka-topics.sh --create --if-not-exists --topic $(RIDE_REQUESTED_TOPIC) --bootstrap-server localhost:9092 --partitions 3 --replication-factor 1
 	$(COMPOSE) exec -T kafka kafka-topics.sh --create --if-not-exists --topic $(RIDE_ASSIGNED_TOPIC) --bootstrap-server localhost:9092 --partitions 3 --replication-factor 1
 	$(COMPOSE) exec -T kafka kafka-topics.sh --create --if-not-exists --topic $(RIDE_UNASSIGNED_TOPIC) --bootstrap-server localhost:9092 --partitions 3 --replication-factor 1
+	$(COMPOSE) exec -T kafka kafka-topics.sh --create --if-not-exists --topic $(DRIVER_JOB_OFFER_CREATED_TOPIC) --bootstrap-server localhost:9092 --partitions 3 --replication-factor 1
 
 migrate-up:
 	cd ../go-ride-db-schema && go run ./cmd/migrate up
@@ -67,6 +69,9 @@ build-cab-request-handler:
 build-dispatch:
 	cd services/trip-dispatch-worker && go build ./...
 
+build-driver-realtime-gateway:
+	cd services/driver-realtime-gateway && go build ./...
+
 test-location:
 	cd services/location-producers && go test ./...
 	cd services/location-consumers && go test ./...
@@ -79,6 +84,9 @@ test-cab-request-handler:
 
 test-dispatch:
 	cd services/trip-dispatch-worker && go test ./...
+
+test-driver-realtime-gateway:
+	cd services/driver-realtime-gateway && go test ./...
 
 run-location-producers:
 	cd services/location-producers && go run ./cmd/api
@@ -94,3 +102,6 @@ run-dispatch-api:
 
 run-dispatch-consumer:
 	cd services/trip-dispatch-worker && go run ./cmd/consumer
+
+run-driver-realtime-gateway:
+	cd services/driver-realtime-gateway && go run ./cmd/api

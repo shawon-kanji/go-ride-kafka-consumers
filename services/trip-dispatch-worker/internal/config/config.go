@@ -9,14 +9,15 @@ import (
 )
 
 type Config struct {
-	ServiceName   string
-	Mode          string
-	DB            DBConfig
-	KafkaBrokers  []string
-	ConsumerGroup string
-	InputTopic    string
-	AssignedTopic string
-	UnassignTopic string
+	ServiceName       string
+	Mode              string
+	DB                DBConfig
+	KafkaBrokers      []string
+	ConsumerGroup     string
+	InputTopic        string
+	AssignedTopic     string
+	UnassignTopic     string
+	OfferCreatedTopic string
 
 	NearestDriversLimit       int
 	DriverLocationFreshWindow time.Duration
@@ -106,11 +107,12 @@ func Load(mode string) (Config, error) {
 			Name:     getEnv("DB_NAME", "go_ride"),
 			SSLMode:  getEnv("DB_SSLMODE", "disable"),
 		},
-		KafkaBrokers:  splitAndTrim(getEnv("KAFKA_BROKERS", "localhost:9094")),
-		ConsumerGroup: getEnv("KAFKA_CONSUMER_GROUP", "trip-dispatch-worker-group"),
-		InputTopic:    getEnv("KAFKA_INPUT_TOPIC", "ride.requested.v1"),
-		AssignedTopic: getEnv("KAFKA_ASSIGNED_TOPIC", "ride.assigned.v1"),
-		UnassignTopic: getEnv("KAFKA_UNASSIGNED_TOPIC", "ride.unassigned.v1"),
+		KafkaBrokers:      splitAndTrim(getEnv("KAFKA_BROKERS", "localhost:9094")),
+		ConsumerGroup:     getEnv("KAFKA_CONSUMER_GROUP", "trip-dispatch-worker-group"),
+		InputTopic:        getEnv("KAFKA_INPUT_TOPIC", "ride.requested.v1"),
+		AssignedTopic:     getEnv("KAFKA_ASSIGNED_TOPIC", "ride.assigned.v1"),
+		UnassignTopic:     getEnv("KAFKA_UNASSIGNED_TOPIC", "ride.unassigned.v1"),
+		OfferCreatedTopic: getEnv("KAFKA_OFFER_CREATED_TOPIC", "driver.job_offer.created.v1"),
 
 		NearestDriversLimit:       nearestDriversLimit,
 		DriverLocationFreshWindow: time.Duration(driverLocationFreshWindowSeconds) * time.Second,
@@ -135,6 +137,9 @@ func Load(mode string) (Config, error) {
 	}
 	if cfg.UnassignTopic == "" {
 		return Config{}, fmt.Errorf("KAFKA_UNASSIGNED_TOPIC is required")
+	}
+	if cfg.OfferCreatedTopic == "" {
+		return Config{}, fmt.Errorf("KAFKA_OFFER_CREATED_TOPIC is required")
 	}
 	if cfg.NearestDriversLimit <= 0 {
 		return Config{}, fmt.Errorf("NEAREST_DRIVERS_LIMIT must be greater than zero")

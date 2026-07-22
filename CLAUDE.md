@@ -15,7 +15,8 @@ The full target architecture (cab request → fare lock → dispatch → driver 
   - `location-producers`: HTTP ingest API + Kafka producer for driver location updates.
   - `location-consumers`: Kafka consumer that persists driver locations.
   - `cab-request-handler`: HTTP API + Kafka producer for the rider-facing cab request flow (fare estimate, booking, current-trip polling).
-  - `trip-dispatch-worker`: Kafka consumer intended to match riders with drivers; currently still a `NoopConsumer` stub (see `internal/kafka/consumer.go`) — the real dispatch logic (nearest-driver search, job offers, assignment) is not yet implemented.
+  - `trip-dispatch-worker`: Kafka consumer that matches riders with drivers — real dispatch logic implemented (nearest-driver search via S2/Haversine, job offer creation, radius/backoff retry sweep); publishes `driver.job_offer.created.v1` after each dispatch attempt for `driver-realtime-gateway` to fan out. Driver accept/reject and `ride.assigned.v1`/`ride.unassigned.v1` publishing are not yet implemented.
+  - `driver-realtime-gateway`: WebSocket gateway that pushes job offers to connected drivers in realtime, with Redis-backed presence routing for multi-instance operation and DB-backed reconnect replay. Driver accept/reject business logic is not yet implemented (that's `docs/cab-request-flow.md` Phase 7).
 - Every service (and the root module) follows the same internal shape: `cmd/<entrypoint>/main.go` → `internal/bootstrap` (wires config/DB/Kafka/HTTP) → `internal/config`, `internal/kafka` (and/or `internal/api`), `internal/db`/`internal/domain` → `pkg/events` (Kafka event contracts, JSON-serialized).
 
 ## Shared DB schema

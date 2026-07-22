@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"go-ride-kafka-consumers/services/trip-dispatch-worker/internal/config"
+	"go-ride-kafka-consumers/services/trip-dispatch-worker/pkg/events"
 
 	"github.com/google/uuid"
 	schemamodels "github.com/shawon-kanji/go-ride-db-schema/models"
@@ -85,13 +86,21 @@ type driverCandidate struct {
 	DistanceKM float64   `gorm:"column:distance_km"`
 }
 
-type Service struct {
-	db  *gorm.DB
-	cfg config.Config
+// Producer publishes the job-offer-created event to the realtime gateway's
+// input topic. Defined here (rather than importing internal/kafka) to avoid
+// an import cycle, since internal/kafka's consumer already imports dispatch.
+type Producer interface {
+	PublishJobOffer(ctx context.Context, event events.JobOfferV1) error
 }
 
-func NewService(db *gorm.DB, cfg config.Config) *Service {
-	return &Service{db: db, cfg: cfg}
+type Service struct {
+	db       *gorm.DB
+	cfg      config.Config
+	producer Producer
+}
+
+func NewService(db *gorm.DB, cfg config.Config, producer Producer) *Service {
+	return &Service{db: db, cfg: cfg, producer: producer}
 }
 
 // AttemptDispatch runs exactly one dispatch attempt for the given request_id.
@@ -101,8 +110,10 @@ func NewService(db *gorm.DB, cfg config.Config) *Service {
 // status guard make repeated/concurrent calls a no-op once the request has moved
 // past the dispatch stage.
 func (s *Service) AttemptDispatch(ctx context.Context, requestID uuid.UUID) error {
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var req schemamodels.TripRequest
+	var req schemamodels.TripRequest
+	var createdOffers []schemamodels.DriverJobOffer
+
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			Where("request_id = ?", requestID).
 			Take(&req).Error
@@ -146,7 +157,12 @@ func (s *Service) AttemptDispatch(ctx context.Context, requestID uuid.UUID) erro
 		attemptCount := req.DispatchAttemptCount + 1
 
 		if len(candidates) > 0 {
-			return s.createOffers(tx, req, candidates, previousStatus, attemptCount, radius, now)
+			offers, err := s.createOffers(tx, req, candidates, previousStatus, attemptCount, radius, now)
+			if err != nil {
+				return err
+			}
+			createdOffers = offers
+			return nil
 		}
 
 		if attemptCount < s.cfg.DispatchMaxAttempts {
@@ -155,9 +171,22 @@ func (s *Service) AttemptDispatch(ctx context.Context, requestID uuid.UUID) erro
 
 		return s.timeout(tx, req, previousStatus, attemptCount, radius, now)
 	})
+	if err != nil {
+		return err
+	}
+
+	if len(createdOffers) == 0 {
+		return nil
+	}
+
+	if err := s.producer.PublishJobOffer(ctx, buildJobOfferEvent(req, createdOffers)); err != nil {
+		return fmt.Errorf("publish job offer event request_id=%s: %w", req.ID, err)
+	}
+
+	return nil
 }
 
-func (s *Service) createOffers(tx *gorm.DB, req schemamodels.TripRequest, candidates []driverCandidate, previousStatus string, attemptCount int, radius float64, now time.Time) error {
+func (s *Service) createOffers(tx *gorm.DB, req schemamodels.TripRequest, candidates []driverCandidate, previousStatus string, attemptCount int, radius float64, now time.Time) ([]schemamodels.DriverJobOffer, error) {
 	offers := make([]schemamodels.DriverJobOffer, len(candidates))
 	driverIDs := make([]string, len(candidates))
 	expiresAt := now.Add(time.Duration(s.cfg.JobOfferTTLSeconds) * time.Second)
@@ -181,7 +210,7 @@ func (s *Service) createOffers(tx *gorm.DB, req schemamodels.TripRequest, candid
 	}
 
 	if err := tx.Create(&offers).Error; err != nil {
-		return fmt.Errorf("create driver job offers request_id=%s: %w", req.ID, err)
+		return nil, fmt.Errorf("create driver job offers request_id=%s: %w", req.ID, err)
 	}
 
 	if err := tx.Model(&schemamodels.TripRequest{}).Where("request_id = ?", req.ID).Updates(map[string]any{
@@ -191,7 +220,7 @@ func (s *Service) createOffers(tx *gorm.DB, req schemamodels.TripRequest, candid
 		"next_dispatch_at":       nil,
 		"updated_at":             now,
 	}).Error; err != nil {
-		return fmt.Errorf("transition trip request to offered request_id=%s: %w", req.ID, err)
+		return nil, fmt.Errorf("transition trip request to offered request_id=%s: %w", req.ID, err)
 	}
 
 	payload, err := json.Marshal(map[string]any{
@@ -201,7 +230,7 @@ func (s *Service) createOffers(tx *gorm.DB, req schemamodels.TripRequest, candid
 		"driver_ids":  driverIDs,
 	})
 	if err != nil {
-		return fmt.Errorf("marshal dispatch history payload request_id=%s: %w", req.ID, err)
+		return nil, fmt.Errorf("marshal dispatch history payload request_id=%s: %w", req.ID, err)
 	}
 
 	toStatus := schemamodels.TripRequestStatusOffered
@@ -218,11 +247,48 @@ func (s *Service) createOffers(tx *gorm.DB, req schemamodels.TripRequest, candid
 		CreatedAt:     now,
 	}
 	if err := tx.Create(&history).Error; err != nil {
-		return fmt.Errorf("write trip history request_id=%s: %w", req.ID, err)
+		return nil, fmt.Errorf("write trip history request_id=%s: %w", req.ID, err)
 	}
 
 	log.Printf("dispatch offers created request_id=%s trip_id=%s offer_count=%d radius_km=%.1f attempt=%d", req.ID, req.TripID, len(offers), radius, attemptCount)
-	return nil
+
+	return offers, nil
+}
+
+// buildJobOfferEvent assembles the batch event published to the realtime
+// gateway after the dispatch transaction has committed. Pickup/dropoff are
+// denormalized here so the gateway's live-push path never needs a
+// trip_requests join (only its low-frequency reconnect-replay path does).
+func buildJobOfferEvent(req schemamodels.TripRequest, offers []schemamodels.DriverJobOffer) events.JobOfferV1 {
+	entries := make([]events.JobOfferEntry, len(offers))
+	for i, offer := range offers {
+		entries[i] = events.JobOfferEntry{
+			JobOfferID: offer.ID.String(),
+			DriverID:   offer.DriverID.String(),
+			OfferRank:  offer.OfferRank,
+			OfferedAt:  offer.OfferedAt,
+			ExpiresAt:  offer.ExpiresAt,
+		}
+	}
+
+	correlationID := ""
+	if req.CorrelationID != nil {
+		correlationID = *req.CorrelationID
+	}
+
+	return events.JobOfferV1{
+		RequestID:     req.ID.String(),
+		TripID:        req.TripID.String(),
+		RiderID:       req.RiderID.String(),
+		PickupLat:     req.PickupLat,
+		PickupLng:     req.PickupLng,
+		DropoffLat:    req.DropoffLat,
+		DropoffLng:    req.DropoffLng,
+		Offers:        entries,
+		CorrelationID: correlationID,
+		EventID:       uuid.NewString(),
+		PublishedAt:   time.Now().UTC(),
+	}
 }
 
 func (s *Service) scheduleRetry(tx *gorm.DB, req schemamodels.TripRequest, attemptCount int, radius float64, now time.Time) error {

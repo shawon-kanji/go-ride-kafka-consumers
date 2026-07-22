@@ -17,6 +17,7 @@ type App struct {
 	cfg         config.Config
 	sqlDB       *sql.DB
 	consumer    kafka.Consumer
+	producer    kafka.Producer
 	runner      *worker.Runner
 	sweepRunner *worker.SweepRunner
 }
@@ -37,7 +38,8 @@ func New(mode string) (*App, error) {
 		return nil, fmt.Errorf("extract sql db: %w", err)
 	}
 
-	service := dispatch.NewService(gormDB, cfg)
+	producer := kafka.NewTripDispatcherProducer(cfg)
+	service := dispatch.NewService(gormDB, cfg, producer)
 	consumer := kafka.NewDispatchConsumer(cfg, service)
 	runner := worker.NewRunner(consumer)
 	sweepRunner := worker.NewSweepRunner(gormDB, service, cfg.DispatchSweepInterval, cfg.DispatchMaxAttempts)
@@ -46,6 +48,7 @@ func New(mode string) (*App, error) {
 		cfg:         cfg,
 		sqlDB:       sqlDB,
 		consumer:    consumer,
+		producer:    producer,
 		runner:      runner,
 		sweepRunner: sweepRunner,
 	}, nil
@@ -57,6 +60,9 @@ func (a *App) Run(ctx context.Context) error {
 	defer func() {
 		if err := a.sqlDB.Close(); err != nil {
 			log.Printf("close sql db: %v", err)
+		}
+		if err := a.producer.Close(); err != nil {
+			log.Printf("close kafka producer: %v", err)
 		}
 	}()
 

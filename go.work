@@ -5,4 +5,5 @@ use (
 	./services/location-consumers
 	./services/cab-request-handler
 	./services/trip-dispatch-worker
+	./services/driver-realtime-gateway
 )
