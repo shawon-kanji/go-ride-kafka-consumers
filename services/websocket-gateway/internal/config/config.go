@@ -80,7 +80,7 @@ func Load() (Config, error) {
 	}
 
 	cfg := Config{
-		ServiceName: getEnv("SERVICE_NAME", "driver-realtime-gateway"),
+		ServiceName: getEnv("SERVICE_NAME", "websocket-gateway"),
 		HTTPAddr:    getEnv("HTTP_ADDR", ":8083"),
 		DB: DBConfig{
 			Host:     getEnv("DB_HOST", "localhost"),
@@ -92,7 +92,7 @@ func Load() (Config, error) {
 		},
 
 		KafkaBrokers:       splitAndTrim(getEnv("KAFKA_BROKERS", "localhost:9094")),
-		KafkaConsumerGroup: getEnv("KAFKA_CONSUMER_GROUP", "driver-realtime-gateway-group"),
+		KafkaConsumerGroup: getEnv("KAFKA_CONSUMER_GROUP", "websocket-gateway-group"),
 		OfferCreatedTopic:  getEnv("KAFKA_OFFER_CREATED_TOPIC", "driver.job_offer.created.v1"),
 		RideAssignedTopic:  getEnv("KAFKA_ASSIGNED_TOPIC", "ride.assigned.v1"),
 

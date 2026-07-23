@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"log"
 
-	"go-ride-kafka-consumers/services/driver-realtime-gateway/internal/ws"
-	"go-ride-kafka-consumers/services/driver-realtime-gateway/pkg/events"
+	"go-ride-kafka-consumers/services/websocket-gateway/internal/ws"
+	"go-ride-kafka-consumers/services/websocket-gateway/pkg/events"
 
 	"github.com/google/uuid"
 )
@@ -27,14 +27,14 @@ func NewDeliverer(hub *ws.Hub, store *Store) *Deliverer {
 func (d *Deliverer) HandleBroadcast(ctx context.Context, payload []byte) {
 	var event events.JobOfferV1
 	if err := json.Unmarshal(payload, &event); err != nil {
-		log.Printf("driver_realtime_gateway: discard unparseable job offer broadcast: %v", err)
+		log.Printf("websocket_gateway: discard unparseable job offer broadcast: %v", err)
 		return
 	}
 
 	for _, entry := range event.Offers {
 		driverID, err := uuid.Parse(entry.DriverID)
 		if err != nil {
-			log.Printf("driver_realtime_gateway: discard offer with invalid driver_id=%q job_offer_id=%s: %v", entry.DriverID, entry.JobOfferID, err)
+			log.Printf("websocket_gateway: discard offer with invalid driver_id=%q job_offer_id=%s: %v", entry.DriverID, entry.JobOfferID, err)
 			continue
 		}
 
@@ -60,7 +60,7 @@ func (d *Deliverer) HandleBroadcast(ctx context.Context, payload []byte) {
 
 		payload, err := json.Marshal(message)
 		if err != nil {
-			log.Printf("driver_realtime_gateway: marshal job offer message failed job_offer_id=%s: %v", entry.JobOfferID, err)
+			log.Printf("websocket_gateway: marshal job offer message failed job_offer_id=%s: %v", entry.JobOfferID, err)
 			continue
 		}
 
@@ -76,11 +76,11 @@ func (d *Deliverer) HandleBroadcast(ctx context.Context, payload []byte) {
 
 		jobOfferID, err := uuid.Parse(entry.JobOfferID)
 		if err != nil {
-			log.Printf("driver_realtime_gateway: invalid job_offer_id=%q: %v", entry.JobOfferID, err)
+			log.Printf("websocket_gateway: invalid job_offer_id=%q: %v", entry.JobOfferID, err)
 			continue
 		}
 		if err := d.store.MarkSent(ctx, jobOfferID); err != nil {
-			log.Printf("driver_realtime_gateway: mark sent failed job_offer_id=%s: %v", entry.JobOfferID, err)
+			log.Printf("websocket_gateway: mark sent failed job_offer_id=%s: %v", entry.JobOfferID, err)
 		}
 	}
 }

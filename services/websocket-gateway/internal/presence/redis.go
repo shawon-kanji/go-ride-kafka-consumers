@@ -47,7 +47,7 @@ func (b *Bus) Subscribe(ctx context.Context, handler func(payload []byte)) error
 	sub := b.client.Subscribe(ctx, b.channel)
 	defer func() {
 		if err := sub.Close(); err != nil {
-			log.Printf("driver_realtime_gateway: close redis subscription: %v", err)
+			log.Printf("websocket_gateway: close redis subscription: %v", err)
 		}
 	}()
 

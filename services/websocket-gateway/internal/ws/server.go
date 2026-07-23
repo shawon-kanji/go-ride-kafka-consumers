@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"go-ride-kafka-consumers/services/driver-realtime-gateway/internal/auth"
+	"go-ride-kafka-consumers/services/websocket-gateway/internal/auth"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
@@ -81,13 +81,13 @@ func (s *Server) handleDriverWS(w http.ResponseWriter, r *http.Request) {
 
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("driver_realtime_gateway: ws upgrade failed driver_id=%s: %v", driverID, err)
+		log.Printf("websocket_gateway: ws upgrade failed driver_id=%s: %v", driverID, err)
 		return
 	}
 
 	wsConn := NewConnection(context.Background(), driverID, deviceID, conn, s.pingInterval, s.pongWait, s.onAck)
 	s.hub.Register(wsConn)
-	log.Printf("driver_realtime_gateway: driver connected driver_id=%s device_id=%s", driverID, deviceID)
+	log.Printf("websocket_gateway: driver connected driver_id=%s device_id=%s", driverID, deviceID)
 
 	if s.onConnect != nil {
 		s.onConnect(r.Context(), wsConn)
@@ -96,7 +96,7 @@ func (s *Server) handleDriverWS(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		<-wsConn.Done()
 		s.hub.Unregister(wsConn)
-		log.Printf("driver_realtime_gateway: driver disconnected driver_id=%s device_id=%s", driverID, deviceID)
+		log.Printf("websocket_gateway: driver disconnected driver_id=%s device_id=%s", driverID, deviceID)
 	}()
 }
 
@@ -124,17 +124,17 @@ func (s *Server) handleRiderWS(w http.ResponseWriter, r *http.Request) {
 
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("driver_realtime_gateway: rider ws upgrade failed rider_id=%s: %v", riderID, err)
+		log.Printf("websocket_gateway: rider ws upgrade failed rider_id=%s: %v", riderID, err)
 		return
 	}
 
 	riderConn := NewRiderConnection(context.Background(), riderID, deviceID, conn, s.pingInterval, s.pongWait)
 	s.riderHub.Register(riderConn)
-	log.Printf("driver_realtime_gateway: rider connected rider_id=%s device_id=%s", riderID, deviceID)
+	log.Printf("websocket_gateway: rider connected rider_id=%s device_id=%s", riderID, deviceID)
 
 	go func() {
 		<-riderConn.Done()
 		s.riderHub.Unregister(riderConn)
-		log.Printf("driver_realtime_gateway: rider disconnected rider_id=%s device_id=%s", riderID, deviceID)
+		log.Printf("websocket_gateway: rider disconnected rider_id=%s device_id=%s", riderID, deviceID)
 	}()
 }

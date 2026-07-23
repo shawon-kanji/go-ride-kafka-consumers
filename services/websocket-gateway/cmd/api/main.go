@@ -6,7 +6,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"go-ride-kafka-consumers/services/driver-realtime-gateway/internal/bootstrap"
+	"go-ride-kafka-consumers/services/websocket-gateway/internal/bootstrap"
 )
 
 func main() {

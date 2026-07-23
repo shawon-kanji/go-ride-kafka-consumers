@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"go-ride-kafka-consumers/services/driver-realtime-gateway/internal/ws"
+	"go-ride-kafka-consumers/services/websocket-gateway/internal/ws"
 
 	"github.com/google/uuid"
 	schemamodels "github.com/shawon-kanji/go-ride-db-schema/models"

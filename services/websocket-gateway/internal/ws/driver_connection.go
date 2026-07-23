@@ -122,7 +122,7 @@ func (c *Connection) readPump(pongWait time.Duration) {
 
 		var ack AckMessage
 		if err := json.Unmarshal(payload, &ack); err != nil {
-			log.Printf("driver_realtime_gateway: discard unparseable ws frame driver_id=%s device_id=%s: %v", c.DriverID, c.DeviceID, err)
+			log.Printf("websocket_gateway: discard unparseable ws frame driver_id=%s device_id=%s: %v", c.DriverID, c.DeviceID, err)
 			continue
 		}
 		if ack.Type != "ack" {

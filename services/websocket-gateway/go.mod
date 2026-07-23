@@ -1,4 +1,4 @@
-module go-ride-kafka-consumers/services/driver-realtime-gateway
+module go-ride-kafka-consumers/services/websocket-gateway
 
 go 1.25.3
 

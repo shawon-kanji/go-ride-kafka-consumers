@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"go-ride-kafka-consumers/services/driver-realtime-gateway/internal/config"
+	"go-ride-kafka-consumers/services/websocket-gateway/internal/config"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"

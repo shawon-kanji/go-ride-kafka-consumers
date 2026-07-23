@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"log"
 
-	"go-ride-kafka-consumers/services/driver-realtime-gateway/internal/ws"
-	"go-ride-kafka-consumers/services/driver-realtime-gateway/pkg/events"
+	"go-ride-kafka-consumers/services/websocket-gateway/internal/ws"
+	"go-ride-kafka-consumers/services/websocket-gateway/pkg/events"
 
 	"github.com/google/uuid"
 )
@@ -25,13 +25,13 @@ func NewDeliverer(riderHub *ws.RiderHub) *Deliverer {
 func (d *Deliverer) HandleBroadcast(ctx context.Context, payload []byte) {
 	var event events.RideAssignedV1
 	if err := json.Unmarshal(payload, &event); err != nil {
-		log.Printf("driver_realtime_gateway: discard unparseable ride assigned broadcast: %v", err)
+		log.Printf("websocket_gateway: discard unparseable ride assigned broadcast: %v", err)
 		return
 	}
 
 	riderID, err := uuid.Parse(event.RiderID)
 	if err != nil {
-		log.Printf("driver_realtime_gateway: discard ride assigned event with invalid rider_id=%q request_id=%s: %v", event.RiderID, event.RequestID, err)
+		log.Printf("websocket_gateway: discard ride assigned event with invalid rider_id=%q request_id=%s: %v", event.RiderID, event.RequestID, err)
 		return
 	}
 
@@ -57,7 +57,7 @@ func (d *Deliverer) HandleBroadcast(ctx context.Context, payload []byte) {
 
 	payloadOut, err := json.Marshal(message)
 	if err != nil {
-		log.Printf("driver_realtime_gateway: marshal ride assigned message failed request_id=%s: %v", event.RequestID, err)
+		log.Printf("websocket_gateway: marshal ride assigned message failed request_id=%s: %v", event.RequestID, err)
 		return
 	}
 

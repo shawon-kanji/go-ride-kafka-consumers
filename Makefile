@@ -8,8 +8,8 @@ RIDE_UNASSIGNED_TOPIC ?= ride.unassigned.v1
 DRIVER_JOB_OFFER_CREATED_TOPIC ?= driver.job_offer.created.v1
 
 .PHONY: up down restart logs ps topic-create topic-list topic-delete topic-create-all migrate-up migrate-down migrate-version \
-	build-location build-location-producers build-location-consumers build-cab build-cab-request-handler build-dispatch build-driver-realtime-gateway build-driver-request-handler test-location test-cab test-cab-request-handler test-dispatch test-driver-realtime-gateway test-driver-request-handler \
-	run-location-producers run-location-consumers run-cab-request-handler run-dispatch-api run-dispatch-consumer run-driver-realtime-gateway run-driver-request-handler
+	build-location build-location-producers build-location-consumers build-cab build-cab-request-handler build-dispatch build-websocket-gateway build-driver-request-handler test-location test-cab test-cab-request-handler test-dispatch test-websocket-gateway test-driver-request-handler \
+	run-location-producers run-location-consumers run-cab-request-handler run-dispatch-api run-dispatch-consumer run-websocket-gateway run-driver-request-handler
 
 up:
 	$(COMPOSE) up -d
@@ -69,8 +69,8 @@ build-cab-request-handler:
 build-dispatch:
 	cd services/trip-dispatch-worker && go build ./...
 
-build-driver-realtime-gateway:
-	cd services/driver-realtime-gateway && go build ./...
+build-websocket-gateway:
+	cd services/websocket-gateway && go build ./...
 
 build-driver-request-handler:
 	cd services/driver-request-handler && go build ./...
@@ -88,8 +88,8 @@ test-cab-request-handler:
 test-dispatch:
 	cd services/trip-dispatch-worker && go test ./...
 
-test-driver-realtime-gateway:
-	cd services/driver-realtime-gateway && go test ./...
+test-websocket-gateway:
+	cd services/websocket-gateway && go test ./...
 
 test-driver-request-handler:
 	cd services/driver-request-handler && go test ./...
@@ -109,8 +109,8 @@ run-dispatch-api:
 run-dispatch-consumer:
 	cd services/trip-dispatch-worker && go run ./cmd/consumer
 
-run-driver-realtime-gateway:
-	cd services/driver-realtime-gateway && go run ./cmd/api
+run-websocket-gateway:
+	cd services/websocket-gateway && go run ./cmd/api
 
 run-driver-request-handler:
 	cd services/driver-request-handler && go run ./cmd/api

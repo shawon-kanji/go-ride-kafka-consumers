@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"go-ride-kafka-consumers/services/driver-realtime-gateway/internal/presence"
-	"go-ride-kafka-consumers/services/driver-realtime-gateway/pkg/events"
+	"go-ride-kafka-consumers/services/websocket-gateway/internal/presence"
+	"go-ride-kafka-consumers/services/websocket-gateway/pkg/events"
 )
 
 // Notifier broadcasts a JobOfferV1 batch to Redis once per dispatch attempt,
