@@ -8,8 +8,8 @@ RIDE_UNASSIGNED_TOPIC ?= ride.unassigned.v1
 DRIVER_JOB_OFFER_CREATED_TOPIC ?= driver.job_offer.created.v1
 
 .PHONY: up down restart logs ps topic-create topic-list topic-delete topic-create-all migrate-up migrate-down migrate-version \
-	build-location build-location-producers build-location-consumers build-cab build-cab-request-handler build-dispatch build-driver-realtime-gateway test-location test-cab test-cab-request-handler test-dispatch test-driver-realtime-gateway \
-	run-location-producers run-location-consumers run-cab-request-handler run-dispatch-api run-dispatch-consumer run-driver-realtime-gateway
+	build-location build-location-producers build-location-consumers build-cab build-cab-request-handler build-dispatch build-driver-realtime-gateway build-driver-request-handler test-location test-cab test-cab-request-handler test-dispatch test-driver-realtime-gateway test-driver-request-handler \
+	run-location-producers run-location-consumers run-cab-request-handler run-dispatch-api run-dispatch-consumer run-driver-realtime-gateway run-driver-request-handler
 
 up:
 	$(COMPOSE) up -d
@@ -72,6 +72,9 @@ build-dispatch:
 build-driver-realtime-gateway:
 	cd services/driver-realtime-gateway && go build ./...
 
+build-driver-request-handler:
+	cd services/driver-request-handler && go build ./...
+
 test-location:
 	cd services/location-producers && go test ./...
 	cd services/location-consumers && go test ./...
@@ -87,6 +90,9 @@ test-dispatch:
 
 test-driver-realtime-gateway:
 	cd services/driver-realtime-gateway && go test ./...
+
+test-driver-request-handler:
+	cd services/driver-request-handler && go test ./...
 
 run-location-producers:
 	cd services/location-producers && go run ./cmd/api
@@ -105,3 +111,6 @@ run-dispatch-consumer:
 
 run-driver-realtime-gateway:
 	cd services/driver-realtime-gateway && go run ./cmd/api
+
+run-driver-request-handler:
+	cd services/driver-request-handler && go run ./cmd/api

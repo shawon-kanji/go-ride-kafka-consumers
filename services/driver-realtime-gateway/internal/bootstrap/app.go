@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 
+	"go-ride-kafka-consumers/services/driver-realtime-gateway/internal/assignments"
 	"go-ride-kafka-consumers/services/driver-realtime-gateway/internal/auth"
 	"go-ride-kafka-consumers/services/driver-realtime-gateway/internal/config"
 	"go-ride-kafka-consumers/services/driver-realtime-gateway/internal/db"
@@ -19,11 +20,13 @@ import (
 )
 
 type App struct {
-	cfg      config.Config
-	sqlDB    *sql.DB
-	bus      *presence.Bus
-	consumer kafka.Consumer
-	server   *http.Server
+	cfg                config.Config
+	sqlDB              *sql.DB
+	bus                *presence.Bus
+	assignmentBus      *presence.Bus
+	consumer           kafka.Consumer
+	assignmentConsumer kafka.Consumer
+	server             *http.Server
 }
 
 func New() (*App, error) {
@@ -52,6 +55,13 @@ func New() (*App, error) {
 	notifier := offers.NewNotifier(bus)
 	consumer := kafka.NewOfferConsumer(cfg, notifier)
 
+	riderHub := ws.NewRiderHub()
+	assignmentDeliverer := assignments.NewDeliverer(riderHub)
+
+	assignmentBus := presence.NewBus(cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB, cfg.RedisAssignmentChannel)
+	assignmentNotifier := assignments.NewNotifier(assignmentBus)
+	assignmentConsumer := kafka.NewAssignmentConsumer(cfg, assignmentNotifier)
+
 	verifier := auth.NewVerifier(cfg.JWTSecret, cfg.JWTIssuer, cfg.JWTAudience)
 
 	onConnect := func(ctx context.Context, conn *ws.Connection) {
@@ -70,7 +80,7 @@ func New() (*App, error) {
 		}
 	}
 
-	wsServer := ws.NewServer(hub, verifier, cfg.PingInterval, cfg.PongWait, onConnect, onAck)
+	wsServer := ws.NewServer(hub, riderHub, verifier, cfg.PingInterval, cfg.PongWait, onConnect, onAck)
 	mux := http.NewServeMux()
 	wsServer.Routes(mux)
 
@@ -88,12 +98,23 @@ func New() (*App, error) {
 		}
 	}()
 
+	go func() {
+		bgCtx := context.Background()
+		if err := assignmentBus.Subscribe(bgCtx, func(payload []byte) {
+			assignmentDeliverer.HandleBroadcast(bgCtx, payload)
+		}); err != nil {
+			log.Printf("driver_realtime_gateway: assignment presence subscribe stopped: %v", err)
+		}
+	}()
+
 	return &App{
-		cfg:      cfg,
-		sqlDB:    sqlDB,
-		bus:      bus,
-		consumer: consumer,
-		server:   httpServer,
+		cfg:                cfg,
+		sqlDB:              sqlDB,
+		bus:                bus,
+		assignmentBus:      assignmentBus,
+		consumer:           consumer,
+		assignmentConsumer: assignmentConsumer,
+		server:             httpServer,
 	}, nil
 }
 
@@ -107,17 +128,28 @@ func (a *App) Run(ctx context.Context) error {
 		if err := a.bus.Close(); err != nil {
 			log.Printf("close redis bus: %v", err)
 		}
+		if err := a.assignmentBus.Close(); err != nil {
+			log.Printf("close assignment redis bus: %v", err)
+		}
 	}()
 
 	if err := a.sqlDB.PingContext(ctx); err != nil {
 		return fmt.Errorf("ping sql db: %w", err)
 	}
 
-	errCh := make(chan error, 2)
+	errCh := make(chan error, 3)
 
 	go func() {
 		if err := a.consumer.Start(ctx); err != nil {
 			errCh <- fmt.Errorf("kafka consumer: %w", err)
+			return
+		}
+		errCh <- nil
+	}()
+
+	go func() {
+		if err := a.assignmentConsumer.Start(ctx); err != nil {
+			errCh <- fmt.Errorf("assignment kafka consumer: %w", err)
 			return
 		}
 		errCh <- nil
@@ -137,7 +169,7 @@ func (a *App) Run(ctx context.Context) error {
 	}()
 
 	var firstErr error
-	for i := 0; i < 2; i++ {
+	for i := 0; i < 3; i++ {
 		if err := <-errCh; err != nil && firstErr == nil {
 			firstErr = err
 		}

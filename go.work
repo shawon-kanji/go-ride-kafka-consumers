@@ -6,4 +6,5 @@ use (
 	./services/cab-request-handler
 	./services/trip-dispatch-worker
 	./services/driver-realtime-gateway
+	./services/driver-request-handler
 )

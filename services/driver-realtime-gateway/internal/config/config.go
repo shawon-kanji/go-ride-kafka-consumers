@@ -16,11 +16,13 @@ type Config struct {
 	KafkaBrokers       []string
 	KafkaConsumerGroup string
 	OfferCreatedTopic  string
+	RideAssignedTopic  string
 
-	RedisAddr     string
-	RedisPassword string
-	RedisDB       int
-	RedisChannel  string
+	RedisAddr              string
+	RedisPassword          string
+	RedisDB                int
+	RedisChannel           string
+	RedisAssignmentChannel string
 
 	JWTSecret   string
 	JWTIssuer   string
@@ -92,11 +94,13 @@ func Load() (Config, error) {
 		KafkaBrokers:       splitAndTrim(getEnv("KAFKA_BROKERS", "localhost:9094")),
 		KafkaConsumerGroup: getEnv("KAFKA_CONSUMER_GROUP", "driver-realtime-gateway-group"),
 		OfferCreatedTopic:  getEnv("KAFKA_OFFER_CREATED_TOPIC", "driver.job_offer.created.v1"),
+		RideAssignedTopic:  getEnv("KAFKA_ASSIGNED_TOPIC", "ride.assigned.v1"),
 
-		RedisAddr:     getEnv("REDIS_ADDR", "localhost:6379"),
-		RedisPassword: getEnv("REDIS_PASSWORD", ""),
-		RedisDB:       redisDB,
-		RedisChannel:  getEnv("REDIS_OFFER_CHANNEL", "driver-offers"),
+		RedisAddr:              getEnv("REDIS_ADDR", "localhost:6379"),
+		RedisPassword:          getEnv("REDIS_PASSWORD", ""),
+		RedisDB:                redisDB,
+		RedisChannel:           getEnv("REDIS_OFFER_CHANNEL", "driver-offers"),
+		RedisAssignmentChannel: getEnv("REDIS_ASSIGNMENT_CHANNEL", "ride-assignments"),
 
 		JWTSecret:   getEnv("JWT_SECRET", ""),
 		JWTIssuer:   getEnv("JWT_ISSUER", "go-ride-backend"),
@@ -114,6 +118,9 @@ func Load() (Config, error) {
 	}
 	if cfg.OfferCreatedTopic == "" {
 		return Config{}, fmt.Errorf("KAFKA_OFFER_CREATED_TOPIC is required")
+	}
+	if cfg.RideAssignedTopic == "" {
+		return Config{}, fmt.Errorf("KAFKA_ASSIGNED_TOPIC is required")
 	}
 	if cfg.RedisAddr == "" {
 		return Config{}, fmt.Errorf("REDIS_ADDR is required")

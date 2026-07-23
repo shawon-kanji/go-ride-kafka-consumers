@@ -7,7 +7,7 @@ import (
 )
 
 // Claims mirrors go-ride-backend/infrastructure/security/jwt.go's Claims
-// shape exactly, since this gateway only ever verifies tokens minted there —
+// shape exactly, since this service only ever verifies tokens minted there —
 // it never generates one itself.
 type Claims struct {
 	UserID string `json:"user_id"`
@@ -16,10 +16,7 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
-const (
-	DriverRole = "driver"
-	RiderRole  = "rider"
-)
+const DriverRole = "driver"
 
 type Verifier struct {
 	secretKey []byte

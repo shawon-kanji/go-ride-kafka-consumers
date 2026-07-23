@@ -79,3 +79,56 @@ const (
 	AckStatusAccepted  = "accepted"
 	AckStatusRejected  = "rejected"
 )
+
+// RideAssignedMessage is pushed once to the rider once a driver wins the
+// accept race. Fire-and-forget — no ack expected back, unlike JobOfferMessage.
+type RideAssignedMessage struct {
+	Type          string    `json:"type"`
+	RequestID     string    `json:"request_id"`
+	TripID        string    `json:"trip_id"`
+	OngoingTripID string    `json:"ongoing_trip_id"`
+	DriverID      string    `json:"driver_id"`
+	DriverName    string    `json:"driver_name,omitempty"`
+	DriverLat     *float64  `json:"driver_lat,omitempty"`
+	DriverLng     *float64  `json:"driver_lng,omitempty"`
+	PickupLat     float64   `json:"pickup_lat"`
+	PickupLng     float64   `json:"pickup_lng"`
+	DropoffLat    float64   `json:"dropoff_lat"`
+	DropoffLng    float64   `json:"dropoff_lng"`
+	CorrelationID string    `json:"correlation_id,omitempty"`
+	SentAt        time.Time `json:"sent_at"`
+}
+
+type RideAssignedParams struct {
+	RequestID     string
+	TripID        string
+	OngoingTripID string
+	DriverID      string
+	DriverName    string
+	DriverLat     *float64
+	DriverLng     *float64
+	PickupLat     float64
+	PickupLng     float64
+	DropoffLat    float64
+	DropoffLng    float64
+	CorrelationID string
+}
+
+func NewRideAssignedMessage(p RideAssignedParams) RideAssignedMessage {
+	return RideAssignedMessage{
+		Type:          "ride_assigned",
+		RequestID:     p.RequestID,
+		TripID:        p.TripID,
+		OngoingTripID: p.OngoingTripID,
+		DriverID:      p.DriverID,
+		DriverName:    p.DriverName,
+		DriverLat:     p.DriverLat,
+		DriverLng:     p.DriverLng,
+		PickupLat:     p.PickupLat,
+		PickupLng:     p.PickupLng,
+		DropoffLat:    p.DropoffLat,
+		DropoffLng:    p.DropoffLng,
+		CorrelationID: p.CorrelationID,
+		SentAt:        time.Now().UTC(),
+	}
+}

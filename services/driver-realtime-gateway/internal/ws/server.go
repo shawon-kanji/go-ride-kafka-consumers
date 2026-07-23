@@ -26,6 +26,7 @@ var upgrader = websocket.Upgrader{
 // import back would cycle.
 type Server struct {
 	hub          *Hub
+	riderHub     *RiderHub
 	verifier     *auth.Verifier
 	pingInterval time.Duration
 	pongWait     time.Duration
@@ -33,9 +34,10 @@ type Server struct {
 	onAck        func(ctx context.Context, ack AckMessage)
 }
 
-func NewServer(hub *Hub, verifier *auth.Verifier, pingInterval, pongWait time.Duration, onConnect func(ctx context.Context, conn *Connection), onAck func(ctx context.Context, ack AckMessage)) *Server {
+func NewServer(hub *Hub, riderHub *RiderHub, verifier *auth.Verifier, pingInterval, pongWait time.Duration, onConnect func(ctx context.Context, conn *Connection), onAck func(ctx context.Context, ack AckMessage)) *Server {
 	return &Server{
 		hub:          hub,
+		riderHub:     riderHub,
 		verifier:     verifier,
 		pingInterval: pingInterval,
 		pongWait:     pongWait,
@@ -47,6 +49,7 @@ func NewServer(hub *Hub, verifier *auth.Verifier, pingInterval, pongWait time.Du
 func (s *Server) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /ws/driver", s.handleDriverWS)
+	mux.HandleFunc("GET /ws/rider", s.handleRiderWS)
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
@@ -94,5 +97,44 @@ func (s *Server) handleDriverWS(w http.ResponseWriter, r *http.Request) {
 		<-wsConn.Done()
 		s.hub.Unregister(wsConn)
 		log.Printf("driver_realtime_gateway: driver disconnected driver_id=%s device_id=%s", driverID, deviceID)
+	}()
+}
+
+// handleRiderWS upgrades GET /ws/rider?token=<jwt>&device_id=<id>. Same
+// query-param token pattern as the driver route, but requires RiderRole.
+func (s *Server) handleRiderWS(w http.ResponseWriter, r *http.Request) {
+	token := r.URL.Query().Get("token")
+	deviceID := r.URL.Query().Get("device_id")
+	if token == "" || deviceID == "" {
+		http.Error(w, "token and device_id are required", http.StatusUnauthorized)
+		return
+	}
+
+	claims, err := s.verifier.Parse(token)
+	if err != nil || claims.Role != auth.RiderRole {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	riderID, err := uuid.Parse(claims.UserID)
+	if err != nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("driver_realtime_gateway: rider ws upgrade failed rider_id=%s: %v", riderID, err)
+		return
+	}
+
+	riderConn := NewRiderConnection(context.Background(), riderID, deviceID, conn, s.pingInterval, s.pongWait)
+	s.riderHub.Register(riderConn)
+	log.Printf("driver_realtime_gateway: rider connected rider_id=%s device_id=%s", riderID, deviceID)
+
+	go func() {
+		<-riderConn.Done()
+		s.riderHub.Unregister(riderConn)
+		log.Printf("driver_realtime_gateway: rider disconnected rider_id=%s device_id=%s", riderID, deviceID)
 	}()
 }
