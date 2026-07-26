@@ -132,3 +132,42 @@ func NewRideAssignedMessage(p RideAssignedParams) RideAssignedMessage {
 		SentAt:        time.Now().UTC(),
 	}
 }
+
+// DriverLocationMessage is pushed to the rider on every location ping from
+// their assigned driver, from accept until pickup. Fire-and-forget, same as
+// RideAssignedMessage — no ack expected back.
+type DriverLocationMessage struct {
+	Type          string    `json:"type"`
+	TripID        string    `json:"trip_id"`
+	OngoingTripID string    `json:"ongoing_trip_id"`
+	DriverID      string    `json:"driver_id"`
+	Latitude      float64   `json:"latitude"`
+	Longitude     float64   `json:"longitude"`
+	AccuracyM     float64   `json:"accuracy_m,omitempty"`
+	EventTime     time.Time `json:"event_time"`
+	SentAt        time.Time `json:"sent_at"`
+}
+
+type DriverLocationParams struct {
+	TripID        string
+	OngoingTripID string
+	DriverID      string
+	Latitude      float64
+	Longitude     float64
+	AccuracyM     float64
+	EventTime     time.Time
+}
+
+func NewDriverLocationMessage(p DriverLocationParams) DriverLocationMessage {
+	return DriverLocationMessage{
+		Type:          "driver_location",
+		TripID:        p.TripID,
+		OngoingTripID: p.OngoingTripID,
+		DriverID:      p.DriverID,
+		Latitude:      p.Latitude,
+		Longitude:     p.Longitude,
+		AccuracyM:     p.AccuracyM,
+		EventTime:     p.EventTime,
+		SentAt:        time.Now().UTC(),
+	}
+}

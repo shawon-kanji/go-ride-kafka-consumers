@@ -17,12 +17,23 @@ type Config struct {
 	KafkaConsumerGroup string
 	OfferCreatedTopic  string
 	RideAssignedTopic  string
+	// DriverLocationTopic must match location-producers' KAFKA_TOPIC / the
+	// root Makefile's LOCATION_TOPIC — they must stay in sync manually,
+	// same caveat as DriverCommissionRate below.
+	DriverLocationTopic string
 
 	RedisAddr              string
 	RedisPassword          string
 	RedisDB                int
 	RedisChannel           string
 	RedisAssignmentChannel string
+	RedisLocationChannel   string
+
+	// ActiveTripTTL bounds how long a driver->rider active-trip mapping
+	// (used to filter the location firehose) survives in Redis. There's no
+	// trip-completion/cancellation event yet to clear it early, so this TTL
+	// is the sole "stop forwarding" mechanism for now.
+	ActiveTripTTL time.Duration
 
 	JWTSecret   string
 	JWTIssuer   string
@@ -79,6 +90,11 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("invalid DRIVER_COMMISSION_RATE: %w", err)
 	}
 
+	activeTripTTLSeconds, err := getIntEnv("ACTIVE_TRIP_TTL_SECONDS", 7200)
+	if err != nil {
+		return Config{}, fmt.Errorf("invalid ACTIVE_TRIP_TTL_SECONDS: %w", err)
+	}
+
 	cfg := Config{
 		ServiceName: getEnv("SERVICE_NAME", "websocket-gateway"),
 		HTTPAddr:    getEnv("HTTP_ADDR", ":8083"),
@@ -91,16 +107,20 @@ func Load() (Config, error) {
 			SSLMode:  getEnv("DB_SSLMODE", "disable"),
 		},
 
-		KafkaBrokers:       splitAndTrim(getEnv("KAFKA_BROKERS", "localhost:9094")),
-		KafkaConsumerGroup: getEnv("KAFKA_CONSUMER_GROUP", "websocket-gateway-group"),
-		OfferCreatedTopic:  getEnv("KAFKA_OFFER_CREATED_TOPIC", "driver.job_offer.created.v1"),
-		RideAssignedTopic:  getEnv("KAFKA_ASSIGNED_TOPIC", "ride.assigned.v1"),
+		KafkaBrokers:        splitAndTrim(getEnv("KAFKA_BROKERS", "localhost:9094")),
+		KafkaConsumerGroup:  getEnv("KAFKA_CONSUMER_GROUP", "websocket-gateway-group"),
+		OfferCreatedTopic:   getEnv("KAFKA_OFFER_CREATED_TOPIC", "driver.job_offer.created.v1"),
+		RideAssignedTopic:   getEnv("KAFKA_ASSIGNED_TOPIC", "ride.assigned.v1"),
+		DriverLocationTopic: getEnv("KAFKA_LOCATION_TOPIC", "driver.location.updated.v1"),
 
 		RedisAddr:              getEnv("REDIS_ADDR", "localhost:6379"),
 		RedisPassword:          getEnv("REDIS_PASSWORD", ""),
 		RedisDB:                redisDB,
 		RedisChannel:           getEnv("REDIS_OFFER_CHANNEL", "driver-offers"),
 		RedisAssignmentChannel: getEnv("REDIS_ASSIGNMENT_CHANNEL", "ride-assignments"),
+		RedisLocationChannel:   getEnv("REDIS_LOCATION_CHANNEL", "driver-location-updates"),
+
+		ActiveTripTTL: time.Duration(activeTripTTLSeconds) * time.Second,
 
 		JWTSecret:   getEnv("JWT_SECRET", ""),
 		JWTIssuer:   getEnv("JWT_ISSUER", "go-ride-backend"),
@@ -121,6 +141,9 @@ func Load() (Config, error) {
 	}
 	if cfg.RideAssignedTopic == "" {
 		return Config{}, fmt.Errorf("KAFKA_ASSIGNED_TOPIC is required")
+	}
+	if cfg.DriverLocationTopic == "" {
+		return Config{}, fmt.Errorf("KAFKA_LOCATION_TOPIC is required")
 	}
 	if cfg.RedisAddr == "" {
 		return Config{}, fmt.Errorf("REDIS_ADDR is required")
@@ -145,6 +168,9 @@ func Load() (Config, error) {
 	}
 	if cfg.DriverCommissionRate < 0 || cfg.DriverCommissionRate >= 1 {
 		return Config{}, fmt.Errorf("DRIVER_COMMISSION_RATE must be in [0, 1)")
+	}
+	if cfg.ActiveTripTTL <= 0 {
+		return Config{}, fmt.Errorf("ACTIVE_TRIP_TTL_SECONDS must be greater than zero")
 	}
 
 	return cfg, nil

@@ -14,6 +14,7 @@ import (
 	"go-ride-kafka-consumers/services/websocket-gateway/internal/kafka"
 	"go-ride-kafka-consumers/services/websocket-gateway/internal/offers"
 	"go-ride-kafka-consumers/services/websocket-gateway/internal/presence"
+	"go-ride-kafka-consumers/services/websocket-gateway/internal/tracking"
 	"go-ride-kafka-consumers/services/websocket-gateway/internal/ws"
 
 	"github.com/google/uuid"
@@ -24,8 +25,11 @@ type App struct {
 	sqlDB              *sql.DB
 	bus                *presence.Bus
 	assignmentBus      *presence.Bus
+	locationBus        *presence.Bus
+	locationStore      *presence.Store
 	consumer           kafka.Consumer
 	assignmentConsumer kafka.Consumer
+	locationConsumer   kafka.Consumer
 	server             *http.Server
 }
 
@@ -58,9 +62,16 @@ func New() (*App, error) {
 	riderHub := ws.NewRiderHub()
 	assignmentDeliverer := assignments.NewDeliverer(riderHub)
 
+	locationStore := presence.NewStore(cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB, cfg.ActiveTripTTL)
+
 	assignmentBus := presence.NewBus(cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB, cfg.RedisAssignmentChannel)
-	assignmentNotifier := assignments.NewNotifier(assignmentBus)
+	assignmentNotifier := assignments.NewNotifier(assignmentBus, locationStore)
 	assignmentConsumer := kafka.NewAssignmentConsumer(cfg, assignmentNotifier)
+
+	locationDeliverer := tracking.NewDeliverer(riderHub)
+	locationBus := presence.NewBus(cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB, cfg.RedisLocationChannel)
+	locationNotifier := tracking.NewNotifier(locationStore, locationBus)
+	locationConsumer := kafka.NewLocationConsumer(cfg, locationNotifier)
 
 	verifier := auth.NewVerifier(cfg.JWTSecret, cfg.JWTIssuer, cfg.JWTAudience)
 
@@ -107,13 +118,25 @@ func New() (*App, error) {
 		}
 	}()
 
+	go func() {
+		bgCtx := context.Background()
+		if err := locationBus.Subscribe(bgCtx, func(payload []byte) {
+			locationDeliverer.HandleBroadcast(bgCtx, payload)
+		}); err != nil {
+			log.Printf("websocket_gateway: location presence subscribe stopped: %v", err)
+		}
+	}()
+
 	return &App{
 		cfg:                cfg,
 		sqlDB:              sqlDB,
 		bus:                bus,
 		assignmentBus:      assignmentBus,
+		locationBus:        locationBus,
+		locationStore:      locationStore,
 		consumer:           consumer,
 		assignmentConsumer: assignmentConsumer,
+		locationConsumer:   locationConsumer,
 		server:             httpServer,
 	}, nil
 }
@@ -131,13 +154,19 @@ func (a *App) Run(ctx context.Context) error {
 		if err := a.assignmentBus.Close(); err != nil {
 			log.Printf("close assignment redis bus: %v", err)
 		}
+		if err := a.locationBus.Close(); err != nil {
+			log.Printf("close location redis bus: %v", err)
+		}
+		if err := a.locationStore.Close(); err != nil {
+			log.Printf("close location redis store: %v", err)
+		}
 	}()
 
 	if err := a.sqlDB.PingContext(ctx); err != nil {
 		return fmt.Errorf("ping sql db: %w", err)
 	}
 
-	errCh := make(chan error, 3)
+	errCh := make(chan error, 4)
 
 	go func() {
 		if err := a.consumer.Start(ctx); err != nil {
@@ -150,6 +179,14 @@ func (a *App) Run(ctx context.Context) error {
 	go func() {
 		if err := a.assignmentConsumer.Start(ctx); err != nil {
 			errCh <- fmt.Errorf("assignment kafka consumer: %w", err)
+			return
+		}
+		errCh <- nil
+	}()
+
+	go func() {
+		if err := a.locationConsumer.Start(ctx); err != nil {
+			errCh <- fmt.Errorf("location kafka consumer: %w", err)
 			return
 		}
 		errCh <- nil
@@ -169,7 +206,7 @@ func (a *App) Run(ctx context.Context) error {
 	}()
 
 	var firstErr error
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 4; i++ {
 		if err := <-errCh; err != nil && firstErr == nil {
 			firstErr = err
 		}
