@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	schemamodels "github.com/shawon-kanji/go-ride-db-schema/models"
 	"github.com/shawon-kanji/go-ride-utils/events"
+	"github.com/shawon-kanji/go-ride-utils/httpheaders"
 	"gorm.io/gorm"
 )
 
@@ -238,8 +239,8 @@ func (s *Server) handleCreateCabRequest(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	req.IdempotencyKey = firstNonEmpty(strings.TrimSpace(r.Header.Get("Idempotency-Key")), strings.TrimSpace(req.IdempotencyKey))
-	req.CorrelationID = firstNonEmpty(strings.TrimSpace(r.Header.Get("X-Correlation-ID")), strings.TrimSpace(req.CorrelationID))
+	req.IdempotencyKey = firstNonEmpty(strings.TrimSpace(r.Header.Get(httpheaders.Idempotency)), strings.TrimSpace(req.IdempotencyKey))
+	req.CorrelationID = firstNonEmpty(strings.TrimSpace(r.Header.Get(httpheaders.Correlation)), strings.TrimSpace(req.CorrelationID))
 
 	if err := validateCreateCabRequestRequest(req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
