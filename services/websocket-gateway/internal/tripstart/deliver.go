@@ -45,6 +45,9 @@ func (d *Deliverer) HandleBroadcast(ctx context.Context, payload []byte) {
 		OngoingTripID: broadcast.OngoingTripID,
 		DriverID:      broadcast.DriverID,
 		StartedAt:     broadcast.StartedAt,
+		VehicleColor:  broadcast.VehicleColor,
+		VehiclePlate:  broadcast.VehiclePlate,
+		VehicleModel:  broadcast.VehicleModel,
 	})
 
 	payloadOut, err := json.Marshal(message)

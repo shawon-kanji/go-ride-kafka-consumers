@@ -32,6 +32,7 @@ type AcceptResult struct {
 	TripRequest schemamodels.TripRequest
 	OngoingTrip schemamodels.OngoingTrip
 	Fare        *schemamodels.TripFare
+	Vehicle     *schemamodels.Vehicle
 }
 
 type StartTripResult struct {
@@ -117,12 +118,23 @@ func (s *Service) AcceptOffer(ctx context.Context, jobOfferID, driverID uuid.UUI
 		request.Status = schemamodels.TripRequestStatusAssigned
 		request.AssignedAt = &now
 
+		var vehicle *schemamodels.Vehicle
+		var vehicleID *uuid.UUID
+		var activeVehicle schemamodels.Vehicle
+		if err := tx.Where("driver_id = ? AND is_active = true", driverID).Take(&activeVehicle).Error; err == nil {
+			vehicle = &activeVehicle
+			vehicleID = &activeVehicle.ID
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("load active vehicle driver_id=%s: %w", driverID, err)
+		}
+
 		ongoingTrip := schemamodels.OngoingTrip{
 			ID:         uuid.New(),
 			RequestID:  request.ID,
 			TripID:     request.TripID,
 			RiderID:    request.RiderID,
 			DriverID:   driverID,
+			VehicleID:  vehicleID,
 			Status:     schemamodels.OngoingTripStatusAssigned,
 			PickupLat:  request.PickupLat,
 			PickupLng:  request.PickupLng,
@@ -174,7 +186,7 @@ func (s *Service) AcceptOffer(ctx context.Context, jobOfferID, driverID uuid.UUI
 			}
 		}
 
-		result = AcceptResult{TripRequest: request, OngoingTrip: ongoingTrip, Fare: fare}
+		result = AcceptResult{TripRequest: request, OngoingTrip: ongoingTrip, Fare: fare, Vehicle: vehicle}
 		return nil
 	})
 	if err != nil {
@@ -212,6 +224,11 @@ func (s *Service) AcceptOffer(ctx context.Context, jobOfferID, driverID uuid.UUI
 		DropoffLng:    result.TripRequest.DropoffLng,
 		EventID:       result.OngoingTrip.ID.String(),
 		PublishedAt:   time.Now().UTC(),
+	}
+	if result.Vehicle != nil {
+		event.VehicleColor = result.Vehicle.Color
+		event.VehiclePlate = result.Vehicle.PlateNumber
+		event.VehicleModel = result.Vehicle.ModelName
 	}
 	if result.TripRequest.CorrelationID != nil {
 		event.CorrelationID = *result.TripRequest.CorrelationID
@@ -297,6 +314,18 @@ func (s *Service) StartTrip(ctx context.Context, ongoingTripID, driverID uuid.UU
 		return StartTripResult{}, err
 	}
 
+	var vehicleColor, vehiclePlate, vehicleModel string
+	if result.OngoingTrip.VehicleID != nil {
+		var vehicle schemamodels.Vehicle
+		if err := s.db.WithContext(ctx).Where("id = ?", *result.OngoingTrip.VehicleID).Take(&vehicle).Error; err == nil {
+			vehicleColor = vehicle.Color
+			vehiclePlate = vehicle.PlateNumber
+			vehicleModel = vehicle.ModelName
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return StartTripResult{}, fmt.Errorf("load vehicle vehicle_id=%s: %w", result.OngoingTrip.VehicleID.String(), err)
+		}
+	}
+
 	event := events.RideStartedV1{
 		RequestID:     result.OngoingTrip.RequestID.String(),
 		TripID:        result.OngoingTrip.TripID.String(),
@@ -304,6 +333,9 @@ func (s *Service) StartTrip(ctx context.Context, ongoingTripID, driverID uuid.UU
 		RiderID:       result.OngoingTrip.RiderID.String(),
 		DriverID:      driverID.String(),
 		StartedAt:     now,
+		VehicleColor:  vehicleColor,
+		VehiclePlate:  vehiclePlate,
+		VehicleModel:  vehicleModel,
 		EventID:       result.OngoingTrip.ID.String() + ":started",
 		PublishedAt:   time.Now().UTC(),
 	}

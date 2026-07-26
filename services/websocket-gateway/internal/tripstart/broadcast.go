@@ -11,4 +11,7 @@ type TripStartedBroadcast struct {
 	RiderID       string    `json:"rider_id"`
 	DriverID      string    `json:"driver_id"`
 	StartedAt     time.Time `json:"started_at"`
+	VehicleColor  string    `json:"vehicle_color,omitempty"`
+	VehiclePlate  string    `json:"vehicle_plate,omitempty"`
+	VehicleModel  string    `json:"vehicle_model,omitempty"`
 }

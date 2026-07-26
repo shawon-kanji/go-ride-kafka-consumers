@@ -37,6 +37,9 @@ func (n *Notifier) HandleRideStartedEvent(ctx context.Context, event events.Ride
 		RiderID:       event.RiderID,
 		DriverID:      event.DriverID,
 		StartedAt:     event.StartedAt,
+		VehicleColor:  event.VehicleColor,
+		VehiclePlate:  event.VehiclePlate,
+		VehicleModel:  event.VehicleModel,
 	}
 
 	payload, err := json.Marshal(broadcast)

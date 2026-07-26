@@ -11,6 +11,9 @@ type RideStartedV1 struct {
 	RiderID       string    `json:"rider_id"`
 	DriverID      string    `json:"driver_id"`
 	StartedAt     time.Time `json:"started_at"`
+	VehicleColor  string    `json:"vehicle_color,omitempty"`
+	VehiclePlate  string    `json:"vehicle_plate,omitempty"`
+	VehicleModel  string    `json:"vehicle_model,omitempty"`
 	CorrelationID string    `json:"correlation_id,omitempty"`
 	EventID       string    `json:"event_id"`
 	PublishedAt   time.Time `json:"published_at"`

@@ -18,6 +18,9 @@ type RideAssignedV1 struct {
 	PickupLng     float64   `json:"pickup_lng"`
 	DropoffLat    float64   `json:"dropoff_lat"`
 	DropoffLng    float64   `json:"dropoff_lng"`
+	VehicleColor  string    `json:"vehicle_color,omitempty"`
+	VehiclePlate  string    `json:"vehicle_plate,omitempty"`
+	VehicleModel  string    `json:"vehicle_model,omitempty"`
 	CorrelationID string    `json:"correlation_id,omitempty"`
 	EventID       string    `json:"event_id"`
 	PublishedAt   time.Time `json:"published_at"`

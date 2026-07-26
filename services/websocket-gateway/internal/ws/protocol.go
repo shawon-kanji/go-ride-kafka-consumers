@@ -95,6 +95,9 @@ type RideAssignedMessage struct {
 	PickupLng     float64   `json:"pickup_lng"`
 	DropoffLat    float64   `json:"dropoff_lat"`
 	DropoffLng    float64   `json:"dropoff_lng"`
+	VehicleColor  string    `json:"vehicle_color,omitempty"`
+	VehiclePlate  string    `json:"vehicle_plate,omitempty"`
+	VehicleModel  string    `json:"vehicle_model,omitempty"`
 	CorrelationID string    `json:"correlation_id,omitempty"`
 	SentAt        time.Time `json:"sent_at"`
 }
@@ -111,6 +114,9 @@ type RideAssignedParams struct {
 	PickupLng     float64
 	DropoffLat    float64
 	DropoffLng    float64
+	VehicleColor  string
+	VehiclePlate  string
+	VehicleModel  string
 	CorrelationID string
 }
 
@@ -128,6 +134,9 @@ func NewRideAssignedMessage(p RideAssignedParams) RideAssignedMessage {
 		PickupLng:     p.PickupLng,
 		DropoffLat:    p.DropoffLat,
 		DropoffLng:    p.DropoffLng,
+		VehicleColor:  p.VehicleColor,
+		VehiclePlate:  p.VehiclePlate,
+		VehicleModel:  p.VehicleModel,
 		CorrelationID: p.CorrelationID,
 		SentAt:        time.Now().UTC(),
 	}
@@ -183,6 +192,9 @@ type TripStartedMessage struct {
 	OngoingTripID string    `json:"ongoing_trip_id"`
 	DriverID      string    `json:"driver_id"`
 	StartedAt     time.Time `json:"started_at"`
+	VehicleColor  string    `json:"vehicle_color,omitempty"`
+	VehiclePlate  string    `json:"vehicle_plate,omitempty"`
+	VehicleModel  string    `json:"vehicle_model,omitempty"`
 	SentAt        time.Time `json:"sent_at"`
 }
 
@@ -192,6 +204,9 @@ type TripStartedParams struct {
 	OngoingTripID string
 	DriverID      string
 	StartedAt     time.Time
+	VehicleColor  string
+	VehiclePlate  string
+	VehicleModel  string
 }
 
 func NewTripStartedMessage(p TripStartedParams) TripStartedMessage {
@@ -202,6 +217,9 @@ func NewTripStartedMessage(p TripStartedParams) TripStartedMessage {
 		OngoingTripID: p.OngoingTripID,
 		DriverID:      p.DriverID,
 		StartedAt:     p.StartedAt,
+		VehicleColor:  p.VehicleColor,
+		VehiclePlate:  p.VehiclePlate,
+		VehicleModel:  p.VehicleModel,
 		SentAt:        time.Now().UTC(),
 	}
 }
