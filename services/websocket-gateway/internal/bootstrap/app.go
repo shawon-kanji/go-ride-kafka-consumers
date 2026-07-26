@@ -15,22 +15,25 @@ import (
 	"go-ride-kafka-consumers/services/websocket-gateway/internal/offers"
 	"go-ride-kafka-consumers/services/websocket-gateway/internal/presence"
 	"go-ride-kafka-consumers/services/websocket-gateway/internal/tracking"
+	"go-ride-kafka-consumers/services/websocket-gateway/internal/tripstart"
 	"go-ride-kafka-consumers/services/websocket-gateway/internal/ws"
 
 	"github.com/google/uuid"
 )
 
 type App struct {
-	cfg                config.Config
-	sqlDB              *sql.DB
-	bus                *presence.Bus
-	assignmentBus      *presence.Bus
-	locationBus        *presence.Bus
-	locationStore      *presence.Store
-	consumer           kafka.Consumer
-	assignmentConsumer kafka.Consumer
-	locationConsumer   kafka.Consumer
-	server             *http.Server
+	cfg                 config.Config
+	sqlDB               *sql.DB
+	bus                 *presence.Bus
+	assignmentBus       *presence.Bus
+	locationBus         *presence.Bus
+	tripStartedBus      *presence.Bus
+	locationStore       *presence.Store
+	consumer            kafka.Consumer
+	assignmentConsumer  kafka.Consumer
+	locationConsumer    kafka.Consumer
+	rideStartedConsumer kafka.Consumer
+	server              *http.Server
 }
 
 func New() (*App, error) {
@@ -72,6 +75,11 @@ func New() (*App, error) {
 	locationBus := presence.NewBus(cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB, cfg.RedisLocationChannel)
 	locationNotifier := tracking.NewNotifier(locationStore, locationBus)
 	locationConsumer := kafka.NewLocationConsumer(cfg, locationNotifier)
+
+	tripStartedDeliverer := tripstart.NewDeliverer(riderHub)
+	tripStartedBus := presence.NewBus(cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB, cfg.RedisTripStartedChannel)
+	tripStartedNotifier := tripstart.NewNotifier(locationStore, tripStartedBus)
+	rideStartedConsumer := kafka.NewRideStartedConsumer(cfg, tripStartedNotifier)
 
 	verifier := auth.NewVerifier(cfg.JWTSecret, cfg.JWTIssuer, cfg.JWTAudience)
 
@@ -127,17 +135,28 @@ func New() (*App, error) {
 		}
 	}()
 
+	go func() {
+		bgCtx := context.Background()
+		if err := tripStartedBus.Subscribe(bgCtx, func(payload []byte) {
+			tripStartedDeliverer.HandleBroadcast(bgCtx, payload)
+		}); err != nil {
+			log.Printf("websocket_gateway: trip started presence subscribe stopped: %v", err)
+		}
+	}()
+
 	return &App{
-		cfg:                cfg,
-		sqlDB:              sqlDB,
-		bus:                bus,
-		assignmentBus:      assignmentBus,
-		locationBus:        locationBus,
-		locationStore:      locationStore,
-		consumer:           consumer,
-		assignmentConsumer: assignmentConsumer,
-		locationConsumer:   locationConsumer,
-		server:             httpServer,
+		cfg:                 cfg,
+		sqlDB:               sqlDB,
+		bus:                 bus,
+		assignmentBus:       assignmentBus,
+		locationBus:         locationBus,
+		tripStartedBus:      tripStartedBus,
+		locationStore:       locationStore,
+		consumer:            consumer,
+		assignmentConsumer:  assignmentConsumer,
+		locationConsumer:    locationConsumer,
+		rideStartedConsumer: rideStartedConsumer,
+		server:              httpServer,
 	}, nil
 }
 
@@ -157,6 +176,9 @@ func (a *App) Run(ctx context.Context) error {
 		if err := a.locationBus.Close(); err != nil {
 			log.Printf("close location redis bus: %v", err)
 		}
+		if err := a.tripStartedBus.Close(); err != nil {
+			log.Printf("close trip started redis bus: %v", err)
+		}
 		if err := a.locationStore.Close(); err != nil {
 			log.Printf("close location redis store: %v", err)
 		}
@@ -166,7 +188,7 @@ func (a *App) Run(ctx context.Context) error {
 		return fmt.Errorf("ping sql db: %w", err)
 	}
 
-	errCh := make(chan error, 4)
+	errCh := make(chan error, 5)
 
 	go func() {
 		if err := a.consumer.Start(ctx); err != nil {
@@ -193,6 +215,14 @@ func (a *App) Run(ctx context.Context) error {
 	}()
 
 	go func() {
+		if err := a.rideStartedConsumer.Start(ctx); err != nil {
+			errCh <- fmt.Errorf("ride started kafka consumer: %w", err)
+			return
+		}
+		errCh <- nil
+	}()
+
+	go func() {
 		if err := a.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			errCh <- fmt.Errorf("http server: %w", err)
 			return
@@ -206,7 +236,7 @@ func (a *App) Run(ctx context.Context) error {
 	}()
 
 	var firstErr error
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 5; i++ {
 		if err := <-errCh; err != nil && firstErr == nil {
 			firstErr = err
 		}

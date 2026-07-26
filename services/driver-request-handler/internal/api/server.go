@@ -25,16 +25,17 @@ type errorResponse struct {
 }
 
 type ongoingTripPayload struct {
-	TripRecordID string    `json:"trip_record_id"`
-	RequestID    string    `json:"request_id"`
-	TripID       string    `json:"trip_id"`
-	DriverID     string    `json:"driver_id"`
-	Status       string    `json:"status"`
-	PickupLat    float64   `json:"pickup_lat"`
-	PickupLng    float64   `json:"pickup_lng"`
-	DropoffLat   float64   `json:"dropoff_lat"`
-	DropoffLng   float64   `json:"dropoff_lng"`
-	AssignedAt   time.Time `json:"assigned_at"`
+	TripRecordID string     `json:"trip_record_id"`
+	RequestID    string     `json:"request_id"`
+	TripID       string     `json:"trip_id"`
+	DriverID     string     `json:"driver_id"`
+	Status       string     `json:"status"`
+	PickupLat    float64    `json:"pickup_lat"`
+	PickupLng    float64    `json:"pickup_lng"`
+	DropoffLat   float64    `json:"dropoff_lat"`
+	DropoffLng   float64    `json:"dropoff_lng"`
+	AssignedAt   time.Time  `json:"assigned_at"`
+	StartedAt    *time.Time `json:"started_at,omitempty"`
 }
 
 type tripRequestPayload struct {
@@ -78,6 +79,7 @@ func NewServer(cfg config.Config, verifier *auth.Verifier, offerService *offers.
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", server.handleHealthz)
 	mux.HandleFunc("POST /job-offers/{job_offer_id}/accept", server.handleAcceptOffer)
+	mux.HandleFunc("POST /ongoing-trips/{ongoing_trip_id}/start", server.handleStartTrip)
 
 	server.http = &http.Server{
 		Addr:              cfg.HTTPAddr,
@@ -177,18 +179,7 @@ func (s *Server) handleAcceptOffer(w http.ResponseWriter, r *http.Request) {
 			DropoffLat: result.TripRequest.DropoffLat,
 			DropoffLng: result.TripRequest.DropoffLng,
 		},
-		OngoingTrip: ongoingTripPayload{
-			TripRecordID: result.OngoingTrip.ID.String(),
-			RequestID:    result.OngoingTrip.RequestID.String(),
-			TripID:       result.OngoingTrip.TripID.String(),
-			DriverID:     result.OngoingTrip.DriverID.String(),
-			Status:       result.OngoingTrip.Status,
-			PickupLat:    result.OngoingTrip.PickupLat,
-			PickupLng:    result.OngoingTrip.PickupLng,
-			DropoffLat:   result.OngoingTrip.DropoffLat,
-			DropoffLng:   result.OngoingTrip.DropoffLng,
-			AssignedAt:   result.OngoingTrip.AssignedAt,
-		},
+		OngoingTrip: ongoingTripPayloadFrom(result.OngoingTrip),
 	}
 	if result.Fare != nil {
 		response.TripRequest.Fare = farePayloadFromFare(result.Fare)
@@ -197,6 +188,70 @@ func (s *Server) handleAcceptOffer(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(response)
 	log.Printf("driver accepted offer request_id=%s trip_id=%s driver_id=%s", response.TripRequest.RequestID, response.TripRequest.TripID, driverID)
+}
+
+func (s *Server) handleStartTrip(w http.ResponseWriter, r *http.Request) {
+	token := bearerToken(r)
+	if token == "" {
+		writeJSONError(w, http.StatusUnauthorized, "unauthorized", "missing bearer token")
+		return
+	}
+
+	claims, err := s.verifier.Parse(token)
+	if err != nil || claims.Role != auth.DriverRole {
+		writeJSONError(w, http.StatusUnauthorized, "unauthorized", "invalid or non-driver token")
+		return
+	}
+
+	driverID, err := uuid.Parse(claims.UserID)
+	if err != nil {
+		writeJSONError(w, http.StatusUnauthorized, "unauthorized", "invalid driver id in token")
+		return
+	}
+
+	ongoingTripID, err := uuid.Parse(r.PathValue("ongoing_trip_id"))
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid_ongoing_trip_id", "ongoing_trip_id must be a valid UUID")
+		return
+	}
+
+	result, err := s.offers.StartTrip(r.Context(), ongoingTripID, driverID)
+	if err != nil {
+		switch {
+		case errors.Is(err, offers.ErrTripNotFound):
+			writeJSONError(w, http.StatusNotFound, "trip_not_found", "ongoing trip was not found")
+		case errors.Is(err, offers.ErrTripForbidden):
+			writeJSONError(w, http.StatusForbidden, "trip_forbidden", "ongoing trip does not belong to this driver")
+		case errors.Is(err, offers.ErrTripNotStartable):
+			writeJSONError(w, http.StatusConflict, "trip_not_startable", "trip is not in a startable state")
+		default:
+			log.Printf("start trip ongoing_trip_id=%s driver_id=%s: %v", ongoingTripID, driverID, err)
+			writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to start trip")
+		}
+		return
+	}
+
+	response := ongoingTripPayloadFrom(result.OngoingTrip)
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(response)
+	log.Printf("driver started trip ongoing_trip_id=%s trip_id=%s driver_id=%s", response.TripRecordID, response.TripID, driverID)
+}
+
+func ongoingTripPayloadFrom(trip schemamodels.OngoingTrip) ongoingTripPayload {
+	return ongoingTripPayload{
+		TripRecordID: trip.ID.String(),
+		RequestID:    trip.RequestID.String(),
+		TripID:       trip.TripID.String(),
+		DriverID:     trip.DriverID.String(),
+		Status:       trip.Status,
+		PickupLat:    trip.PickupLat,
+		PickupLng:    trip.PickupLng,
+		DropoffLat:   trip.DropoffLat,
+		DropoffLng:   trip.DropoffLng,
+		AssignedAt:   trip.AssignedAt,
+		StartedAt:    trip.StartedAt,
+	}
 }
 
 func farePayloadFromFare(fare *schemamodels.TripFare) *farePayload {

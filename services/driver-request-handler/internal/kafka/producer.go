@@ -14,12 +14,15 @@ import (
 
 type Producer interface {
 	PublishRideAssigned(ctx context.Context, event events.RideAssignedV1) error
+	PublishRideStarted(ctx context.Context, event events.RideStartedV1) error
 	Close() error
 }
 
 type RideAssignedProducer struct {
-	writer *kafkago.Writer
-	topic  string
+	writer        *kafkago.Writer
+	topic         string
+	startedWriter *kafkago.Writer
+	startedTopic  string
 }
 
 func NewRideAssignedProducer(cfg config.Config) *RideAssignedProducer {
@@ -34,9 +37,22 @@ func NewRideAssignedProducer(cfg config.Config) *RideAssignedProducer {
 		AllowAutoTopicCreation: false,
 	}
 
+	startedWriter := &kafkago.Writer{
+		Addr:                   kafkago.TCP(cfg.KafkaBrokers...),
+		Topic:                  cfg.StartedTopic,
+		Balancer:               &kafkago.Hash{},
+		RequiredAcks:           kafkago.RequireOne,
+		BatchTimeout:           50 * time.Millisecond,
+		WriteTimeout:           5 * time.Second,
+		ReadTimeout:            5 * time.Second,
+		AllowAutoTopicCreation: false,
+	}
+
 	return &RideAssignedProducer{
-		writer: writer,
-		topic:  cfg.AssignedTopic,
+		writer:        writer,
+		topic:         cfg.AssignedTopic,
+		startedWriter: startedWriter,
+		startedTopic:  cfg.StartedTopic,
 	}
 }
 
@@ -59,6 +75,28 @@ func (p *RideAssignedProducer) PublishRideAssigned(ctx context.Context, event ev
 	return nil
 }
 
+func (p *RideAssignedProducer) PublishRideStarted(ctx context.Context, event events.RideStartedV1) error {
+	payload, err := json.Marshal(event)
+	if err != nil {
+		return fmt.Errorf("marshal ride started event: %w", err)
+	}
+
+	message := kafkago.Message{
+		Key:   []byte(event.RequestID),
+		Value: payload,
+		Time:  event.PublishedAt,
+	}
+
+	if err := p.startedWriter.WriteMessages(ctx, message); err != nil {
+		return fmt.Errorf("write kafka message topic=%s: %w", p.startedTopic, err)
+	}
+
+	return nil
+}
+
 func (p *RideAssignedProducer) Close() error {
-	return p.writer.Close()
+	if err := p.writer.Close(); err != nil {
+		return err
+	}
+	return p.startedWriter.Close()
 }

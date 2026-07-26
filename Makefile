@@ -4,6 +4,7 @@ TOPIC ?= driver.location.updated.v1
 LOCATION_TOPIC ?= driver.location.updated.v1
 RIDE_REQUESTED_TOPIC ?= ride.requested.v1
 RIDE_ASSIGNED_TOPIC ?= ride.assigned.v1
+RIDE_STARTED_TOPIC ?= ride.started.v1
 RIDE_UNASSIGNED_TOPIC ?= ride.unassigned.v1
 DRIVER_JOB_OFFER_CREATED_TOPIC ?= driver.job_offer.created.v1
 
@@ -38,6 +39,7 @@ topic-create-all:
 	$(COMPOSE) exec -T kafka kafka-topics.sh --create --if-not-exists --topic $(LOCATION_TOPIC) --bootstrap-server localhost:9092 --partitions 3 --replication-factor 1
 	$(COMPOSE) exec -T kafka kafka-topics.sh --create --if-not-exists --topic $(RIDE_REQUESTED_TOPIC) --bootstrap-server localhost:9092 --partitions 3 --replication-factor 1
 	$(COMPOSE) exec -T kafka kafka-topics.sh --create --if-not-exists --topic $(RIDE_ASSIGNED_TOPIC) --bootstrap-server localhost:9092 --partitions 3 --replication-factor 1
+	$(COMPOSE) exec -T kafka kafka-topics.sh --create --if-not-exists --topic $(RIDE_STARTED_TOPIC) --bootstrap-server localhost:9092 --partitions 3 --replication-factor 1
 	$(COMPOSE) exec -T kafka kafka-topics.sh --create --if-not-exists --topic $(RIDE_UNASSIGNED_TOPIC) --bootstrap-server localhost:9092 --partitions 3 --replication-factor 1
 	$(COMPOSE) exec -T kafka kafka-topics.sh --create --if-not-exists --topic $(DRIVER_JOB_OFFER_CREATED_TOPIC) --bootstrap-server localhost:9092 --partitions 3 --replication-factor 1
 

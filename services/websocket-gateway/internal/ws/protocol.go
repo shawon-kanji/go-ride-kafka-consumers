@@ -171,3 +171,37 @@ func NewDriverLocationMessage(p DriverLocationParams) DriverLocationMessage {
 		SentAt:        time.Now().UTC(),
 	}
 }
+
+// TripStartedMessage is pushed once to the rider when the driver marks the
+// trip started (pickup complete, rider onboard). Fire-and-forget, same as
+// RideAssignedMessage/DriverLocationMessage — no ack expected back. This is
+// also the rider's signal that driver_location pings are about to stop.
+type TripStartedMessage struct {
+	Type          string    `json:"type"`
+	RequestID     string    `json:"request_id"`
+	TripID        string    `json:"trip_id"`
+	OngoingTripID string    `json:"ongoing_trip_id"`
+	DriverID      string    `json:"driver_id"`
+	StartedAt     time.Time `json:"started_at"`
+	SentAt        time.Time `json:"sent_at"`
+}
+
+type TripStartedParams struct {
+	RequestID     string
+	TripID        string
+	OngoingTripID string
+	DriverID      string
+	StartedAt     time.Time
+}
+
+func NewTripStartedMessage(p TripStartedParams) TripStartedMessage {
+	return TripStartedMessage{
+		Type:          "trip_started",
+		RequestID:     p.RequestID,
+		TripID:        p.TripID,
+		OngoingTripID: p.OngoingTripID,
+		DriverID:      p.DriverID,
+		StartedAt:     p.StartedAt,
+		SentAt:        time.Now().UTC(),
+	}
+}

@@ -13,6 +13,7 @@ type Config struct {
 	DB            DBConfig
 	KafkaBrokers  []string
 	AssignedTopic string
+	StartedTopic  string
 	JWTSecret     string
 	JWTIssuer     string
 	JWTAudience   string
@@ -46,6 +47,7 @@ func Load() (Config, error) {
 		},
 		KafkaBrokers:  splitAndTrim(getEnv("KAFKA_BROKERS", "localhost:9094")),
 		AssignedTopic: getEnv("KAFKA_ASSIGNED_TOPIC", "ride.assigned.v1"),
+		StartedTopic:  getEnv("KAFKA_STARTED_TOPIC", "ride.started.v1"),
 		JWTSecret:     getEnv("JWT_SECRET", ""),
 		JWTIssuer:     getEnv("JWT_ISSUER", "go-ride-backend"),
 		JWTAudience:   getEnv("JWT_AUDIENCE", "go-ride-drivers"),
@@ -56,6 +58,9 @@ func Load() (Config, error) {
 	}
 	if cfg.AssignedTopic == "" {
 		return Config{}, fmt.Errorf("KAFKA_ASSIGNED_TOPIC is required")
+	}
+	if cfg.StartedTopic == "" {
+		return Config{}, fmt.Errorf("KAFKA_STARTED_TOPIC is required")
 	}
 	if cfg.HTTPAddr == "" {
 		return Config{}, fmt.Errorf("HTTP_ADDR is required")

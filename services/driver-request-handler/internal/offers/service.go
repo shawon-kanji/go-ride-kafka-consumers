@@ -20,12 +20,20 @@ var (
 	ErrOfferNotFound    = errors.New("offer_not_found")
 	ErrOfferForbidden   = errors.New("offer_forbidden")
 	ErrOfferNotWinnable = errors.New("offer_not_winnable")
+
+	ErrTripNotFound     = errors.New("trip_not_found")
+	ErrTripForbidden    = errors.New("trip_forbidden")
+	ErrTripNotStartable = errors.New("trip_not_startable")
 )
 
 type AcceptResult struct {
 	TripRequest schemamodels.TripRequest
 	OngoingTrip schemamodels.OngoingTrip
 	Fare        *schemamodels.TripFare
+}
+
+type StartTripResult struct {
+	OngoingTrip schemamodels.OngoingTrip
 }
 
 type Service struct {
@@ -199,6 +207,100 @@ func (s *Service) AcceptOffer(ctx context.Context, jobOfferID, driverID uuid.UUI
 
 	if err := s.producer.PublishRideAssigned(ctx, event); err != nil {
 		return AcceptResult{}, fmt.Errorf("publish ride assigned request_id=%s: %w", event.RequestID, err)
+	}
+
+	return result, nil
+}
+
+// StartTrip marks a trip started once the driver has reached the rider and
+// they're onboard: a single collapsed assigned -> in_progress transition, no
+// separate "driver_arriving"/"arrived" step and no geofence validation
+// against pickup coordinates — same trust-the-driver's-tap model as accept.
+func (s *Service) StartTrip(ctx context.Context, ongoingTripID, driverID uuid.UUID) (StartTripResult, error) {
+	now := time.Now().UTC()
+	var result StartTripResult
+	var correlationID *string
+
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var trip schemamodels.OngoingTrip
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ?", ongoingTripID).
+			Take(&trip).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrTripNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("lock ongoing trip id=%s: %w", ongoingTripID, err)
+		}
+
+		if trip.DriverID != driverID {
+			return ErrTripForbidden
+		}
+		if trip.Status != schemamodels.OngoingTripStatusAssigned {
+			return ErrTripNotStartable
+		}
+
+		if err := tx.Model(&schemamodels.OngoingTrip{}).
+			Where("id = ?", trip.ID).
+			Updates(map[string]any{"status": schemamodels.OngoingTripStatusInProgress, "started_at": now, "updated_at": now}).Error; err != nil {
+			return fmt.Errorf("mark ongoing trip in_progress: %w", err)
+		}
+		trip.Status = schemamodels.OngoingTripStatusInProgress
+		trip.StartedAt = &now
+
+		var request schemamodels.TripRequest
+		if err := tx.Where("request_id = ?", trip.RequestID).Take(&request).Error; err == nil {
+			correlationID = request.CorrelationID
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("load trip request request_id=%s: %w", trip.RequestID, err)
+		}
+
+		eventPayload, err := json.Marshal(map[string]any{"ongoing_trip_id": trip.ID})
+		if err != nil {
+			return fmt.Errorf("marshal trip history payload: %w", err)
+		}
+		fromStatus := schemamodels.OngoingTripStatusAssigned
+		toStatus := schemamodels.OngoingTripStatusInProgress
+		history := schemamodels.TripHistory{
+			ID:            uuid.New(),
+			RequestID:     trip.RequestID,
+			TripID:        trip.TripID,
+			RiderID:       &trip.RiderID,
+			DriverID:      &driverID,
+			EventType:     "trip_started",
+			FromStatus:    &fromStatus,
+			ToStatus:      &toStatus,
+			EventPayload:  eventPayload,
+			CorrelationID: correlationID,
+			CreatedAt:     now,
+		}
+		if err := tx.Create(&history).Error; err != nil {
+			return fmt.Errorf("create trip history: %w", err)
+		}
+
+		result = StartTripResult{OngoingTrip: trip}
+		return nil
+	})
+	if err != nil {
+		return StartTripResult{}, err
+	}
+
+	event := events.RideStartedV1{
+		RequestID:     result.OngoingTrip.RequestID.String(),
+		TripID:        result.OngoingTrip.TripID.String(),
+		OngoingTripID: result.OngoingTrip.ID.String(),
+		RiderID:       result.OngoingTrip.RiderID.String(),
+		DriverID:      driverID.String(),
+		StartedAt:     now,
+		EventID:       result.OngoingTrip.ID.String() + ":started",
+		PublishedAt:   time.Now().UTC(),
+	}
+	if correlationID != nil {
+		event.CorrelationID = *correlationID
+	}
+
+	if err := s.producer.PublishRideStarted(ctx, event); err != nil {
+		return StartTripResult{}, fmt.Errorf("publish ride started request_id=%s: %w", event.RequestID, err)
 	}
 
 	return result, nil
