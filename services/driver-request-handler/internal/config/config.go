@@ -5,6 +5,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/shawon-kanji/go-ride-utils/kafkatopics"
 )
 
 type Config struct {
@@ -48,10 +50,10 @@ func Load() (Config, error) {
 			SSLMode:  getEnv("DB_SSLMODE", "disable"),
 		},
 		KafkaBrokers:   splitAndTrim(getEnv("KAFKA_BROKERS", "localhost:9094")),
-		AssignedTopic:  getEnv("KAFKA_ASSIGNED_TOPIC", "ride.assigned.v1"),
-		StartedTopic:   getEnv("KAFKA_STARTED_TOPIC", "ride.started.v1"),
-		EndedTopic:     getEnv("KAFKA_ENDED_TOPIC", "ride.ended.v1"),
-		CompletedTopic: getEnv("KAFKA_COMPLETED_TOPIC", "ride.completed.v1"),
+		AssignedTopic:  getEnv("KAFKA_ASSIGNED_TOPIC", kafkatopics.RideAssignedV1),
+		StartedTopic:   getEnv("KAFKA_STARTED_TOPIC", kafkatopics.RideStartedV1),
+		EndedTopic:     getEnv("KAFKA_ENDED_TOPIC", kafkatopics.RideEndedV1),
+		CompletedTopic: getEnv("KAFKA_COMPLETED_TOPIC", kafkatopics.RideCompletedV1),
 		JWTSecret:      getEnv("JWT_SECRET", ""),
 		JWTIssuer:      getEnv("JWT_ISSUER", "go-ride-backend"),
 		JWTAudience:    getEnv("JWT_AUDIENCE", "go-ride-drivers"),

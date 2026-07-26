@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/shawon-kanji/go-ride-utils/kafkatopics"
 )
 
 type Config struct {
@@ -87,7 +89,7 @@ func Load() (Config, error) {
 			SSLMode:  getEnv("DB_SSLMODE", "disable"),
 		},
 		KafkaBrokers:          splitAndTrim(getEnv("KAFKA_BROKERS", "localhost:9094")),
-		KafkaTopic:            getEnv("KAFKA_TOPIC", "ride.requested.v1"),
+		KafkaTopic:            getEnv("KAFKA_TOPIC", kafkatopics.RideRequestedV1),
 		DefaultSearchRadiusKM: defaultSearchRadiusKM,
 		FareCurrencyCode:      getEnv("FARE_CURRENCY_CODE", "USD"),
 		FarePricingVersion:    getEnv("FARE_PRICING_VERSION", "v1"),

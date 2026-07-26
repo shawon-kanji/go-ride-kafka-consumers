@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/shawon-kanji/go-ride-utils/kafkatopics"
 )
 
 type Config struct {
@@ -18,7 +20,7 @@ func Load() (Config, error) {
 		ServiceName:  getEnv("SERVICE_NAME", "location-producers"),
 		HTTPAddr:     getEnv("HTTP_ADDR", ":8081"),
 		KafkaBrokers: splitAndTrim(getEnv("KAFKA_BROKERS", "localhost:9094")),
-		KafkaTopic:   getEnv("KAFKA_TOPIC", "driver.location.updated.v1"),
+		KafkaTopic:   getEnv("KAFKA_TOPIC", kafkatopics.DriverLocationUpdatedV1),
 	}
 
 	if len(cfg.KafkaBrokers) == 0 {

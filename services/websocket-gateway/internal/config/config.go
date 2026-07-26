@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/shawon-kanji/go-ride-utils/kafkatopics"
 )
 
 type Config struct {
@@ -115,12 +117,12 @@ func Load() (Config, error) {
 
 		KafkaBrokers:        splitAndTrim(getEnv("KAFKA_BROKERS", "localhost:9094")),
 		KafkaConsumerGroup:  getEnv("KAFKA_CONSUMER_GROUP", "websocket-gateway-group"),
-		OfferCreatedTopic:   getEnv("KAFKA_OFFER_CREATED_TOPIC", "driver.job_offer.created.v1"),
-		RideAssignedTopic:   getEnv("KAFKA_ASSIGNED_TOPIC", "ride.assigned.v1"),
-		RideStartedTopic:    getEnv("KAFKA_STARTED_TOPIC", "ride.started.v1"),
-		RideEndedTopic:      getEnv("KAFKA_ENDED_TOPIC", "ride.ended.v1"),
-		RideCompletedTopic:  getEnv("KAFKA_COMPLETED_TOPIC", "ride.completed.v1"),
-		DriverLocationTopic: getEnv("KAFKA_LOCATION_TOPIC", "driver.location.updated.v1"),
+		OfferCreatedTopic:   getEnv("KAFKA_OFFER_CREATED_TOPIC", kafkatopics.DriverJobOfferCreatedV1),
+		RideAssignedTopic:   getEnv("KAFKA_ASSIGNED_TOPIC", kafkatopics.RideAssignedV1),
+		RideStartedTopic:    getEnv("KAFKA_STARTED_TOPIC", kafkatopics.RideStartedV1),
+		RideEndedTopic:      getEnv("KAFKA_ENDED_TOPIC", kafkatopics.RideEndedV1),
+		RideCompletedTopic:  getEnv("KAFKA_COMPLETED_TOPIC", kafkatopics.RideCompletedV1),
+		DriverLocationTopic: getEnv("KAFKA_LOCATION_TOPIC", kafkatopics.DriverLocationUpdatedV1),
 
 		RedisAddr:                 getEnv("REDIS_ADDR", "localhost:6379"),
 		RedisPassword:             getEnv("REDIS_PASSWORD", ""),

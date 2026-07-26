@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/shawon-kanji/go-ride-utils/kafkatopics"
 )
 
 type Config struct {
@@ -115,10 +117,10 @@ func Load(mode string) (Config, error) {
 		},
 		KafkaBrokers:      splitAndTrim(getEnv("KAFKA_BROKERS", "localhost:9094")),
 		ConsumerGroup:     getEnv("KAFKA_CONSUMER_GROUP", "trip-dispatch-worker-group"),
-		InputTopic:        getEnv("KAFKA_INPUT_TOPIC", "ride.requested.v1"),
-		AssignedTopic:     getEnv("KAFKA_ASSIGNED_TOPIC", "ride.assigned.v1"),
-		UnassignTopic:     getEnv("KAFKA_UNASSIGNED_TOPIC", "ride.unassigned.v1"),
-		OfferCreatedTopic: getEnv("KAFKA_OFFER_CREATED_TOPIC", "driver.job_offer.created.v1"),
+		InputTopic:        getEnv("KAFKA_INPUT_TOPIC", kafkatopics.RideRequestedV1),
+		AssignedTopic:     getEnv("KAFKA_ASSIGNED_TOPIC", kafkatopics.RideAssignedV1),
+		UnassignTopic:     getEnv("KAFKA_UNASSIGNED_TOPIC", kafkatopics.RideUnassignedV1),
+		OfferCreatedTopic: getEnv("KAFKA_OFFER_CREATED_TOPIC", kafkatopics.DriverJobOfferCreatedV1),
 
 		NearestDriversLimit:       nearestDriversLimit,
 		DriverLocationFreshWindow: time.Duration(driverLocationFreshWindowSeconds) * time.Second,

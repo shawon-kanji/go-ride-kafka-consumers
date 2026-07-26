@@ -5,6 +5,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/shawon-kanji/go-ride-utils/kafkatopics"
 )
 
 type Config struct {
@@ -42,7 +44,7 @@ func Load() (Config, error) {
 			Name:     getEnv("DB_NAME", "go_ride"),
 			SSLMode:  getEnv("DB_SSLMODE", "disable"),
 		},
-		KafkaTopic:    getEnv("KAFKA_TOPIC", "driver.location.updated.v1"),
+		KafkaTopic:    getEnv("KAFKA_TOPIC", kafkatopics.DriverLocationUpdatedV1),
 		ConsumerGroup: getEnv("KAFKA_CONSUMER_GROUP", "driver-location-worker-group"),
 		KafkaBrokers:  splitAndTrim(getEnv("KAFKA_BROKERS", "localhost:9094")),
 	}
