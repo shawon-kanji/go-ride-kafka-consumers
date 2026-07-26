@@ -18,18 +18,22 @@ type Config struct {
 	OfferCreatedTopic  string
 	RideAssignedTopic  string
 	RideStartedTopic   string
+	RideEndedTopic     string
+	RideCompletedTopic string
 	// DriverLocationTopic must match location-producers' KAFKA_TOPIC / the
 	// root Makefile's LOCATION_TOPIC — they must stay in sync manually,
 	// same caveat as DriverCommissionRate below.
 	DriverLocationTopic string
 
-	RedisAddr               string
-	RedisPassword           string
-	RedisDB                 int
-	RedisChannel            string
-	RedisAssignmentChannel  string
-	RedisLocationChannel    string
-	RedisTripStartedChannel string
+	RedisAddr                 string
+	RedisPassword             string
+	RedisDB                   int
+	RedisChannel              string
+	RedisAssignmentChannel    string
+	RedisLocationChannel      string
+	RedisTripStartedChannel   string
+	RedisTripEndedChannel     string
+	RedisTripCompletedChannel string
 
 	// ActiveTripTTL bounds how long a driver->rider active-trip mapping
 	// (used to filter the location firehose) survives in Redis. There's no
@@ -114,15 +118,19 @@ func Load() (Config, error) {
 		OfferCreatedTopic:   getEnv("KAFKA_OFFER_CREATED_TOPIC", "driver.job_offer.created.v1"),
 		RideAssignedTopic:   getEnv("KAFKA_ASSIGNED_TOPIC", "ride.assigned.v1"),
 		RideStartedTopic:    getEnv("KAFKA_STARTED_TOPIC", "ride.started.v1"),
+		RideEndedTopic:      getEnv("KAFKA_ENDED_TOPIC", "ride.ended.v1"),
+		RideCompletedTopic:  getEnv("KAFKA_COMPLETED_TOPIC", "ride.completed.v1"),
 		DriverLocationTopic: getEnv("KAFKA_LOCATION_TOPIC", "driver.location.updated.v1"),
 
-		RedisAddr:               getEnv("REDIS_ADDR", "localhost:6379"),
-		RedisPassword:           getEnv("REDIS_PASSWORD", ""),
-		RedisDB:                 redisDB,
-		RedisChannel:            getEnv("REDIS_OFFER_CHANNEL", "driver-offers"),
-		RedisAssignmentChannel:  getEnv("REDIS_ASSIGNMENT_CHANNEL", "ride-assignments"),
-		RedisLocationChannel:    getEnv("REDIS_LOCATION_CHANNEL", "driver-location-updates"),
-		RedisTripStartedChannel: getEnv("REDIS_TRIP_STARTED_CHANNEL", "trip-started"),
+		RedisAddr:                 getEnv("REDIS_ADDR", "localhost:6379"),
+		RedisPassword:             getEnv("REDIS_PASSWORD", ""),
+		RedisDB:                   redisDB,
+		RedisChannel:              getEnv("REDIS_OFFER_CHANNEL", "driver-offers"),
+		RedisAssignmentChannel:    getEnv("REDIS_ASSIGNMENT_CHANNEL", "ride-assignments"),
+		RedisLocationChannel:      getEnv("REDIS_LOCATION_CHANNEL", "driver-location-updates"),
+		RedisTripStartedChannel:   getEnv("REDIS_TRIP_STARTED_CHANNEL", "trip-started"),
+		RedisTripEndedChannel:     getEnv("REDIS_TRIP_ENDED_CHANNEL", "trip-ended"),
+		RedisTripCompletedChannel: getEnv("REDIS_TRIP_COMPLETED_CHANNEL", "trip-completed"),
 
 		ActiveTripTTL: time.Duration(activeTripTTLSeconds) * time.Second,
 
@@ -148,6 +156,12 @@ func Load() (Config, error) {
 	}
 	if cfg.RideStartedTopic == "" {
 		return Config{}, fmt.Errorf("KAFKA_STARTED_TOPIC is required")
+	}
+	if cfg.RideEndedTopic == "" {
+		return Config{}, fmt.Errorf("KAFKA_ENDED_TOPIC is required")
+	}
+	if cfg.RideCompletedTopic == "" {
+		return Config{}, fmt.Errorf("KAFKA_COMPLETED_TOPIC is required")
 	}
 	if cfg.DriverLocationTopic == "" {
 		return Config{}, fmt.Errorf("KAFKA_LOCATION_TOPIC is required")

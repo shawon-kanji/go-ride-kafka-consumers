@@ -205,3 +205,82 @@ func NewTripStartedMessage(p TripStartedParams) TripStartedMessage {
 		SentAt:        time.Now().UTC(),
 	}
 }
+
+// TripEndedMessage is pushed once to the rider when the driver marks the
+// trip ended at the destination (in_progress -> awaiting_payment). Carries
+// the final fare due so the rider can see the amount before handing over
+// cash. Fire-and-forget, no ack expected back.
+type TripEndedMessage struct {
+	Type          string    `json:"type"`
+	RequestID     string    `json:"request_id"`
+	TripID        string    `json:"trip_id"`
+	OngoingTripID string    `json:"ongoing_trip_id"`
+	DriverID      string    `json:"driver_id"`
+	FinalFare     float64   `json:"final_fare"`
+	CurrencyCode  string    `json:"currency_code"`
+	EndedAt       time.Time `json:"ended_at"`
+	SentAt        time.Time `json:"sent_at"`
+}
+
+type TripEndedParams struct {
+	RequestID     string
+	TripID        string
+	OngoingTripID string
+	DriverID      string
+	FinalFare     float64
+	CurrencyCode  string
+	EndedAt       time.Time
+}
+
+func NewTripEndedMessage(p TripEndedParams) TripEndedMessage {
+	return TripEndedMessage{
+		Type:          "trip_ended",
+		RequestID:     p.RequestID,
+		TripID:        p.TripID,
+		OngoingTripID: p.OngoingTripID,
+		DriverID:      p.DriverID,
+		FinalFare:     p.FinalFare,
+		CurrencyCode:  p.CurrencyCode,
+		EndedAt:       p.EndedAt,
+		SentAt:        time.Now().UTC(),
+	}
+}
+
+// TripCompletedMessage is pushed once to the rider when the driver confirms
+// cash payment was collected (awaiting_payment -> completed) — the trip's
+// terminal state. Fire-and-forget, no ack expected back.
+type TripCompletedMessage struct {
+	Type               string    `json:"type"`
+	RequestID          string    `json:"request_id"`
+	TripID             string    `json:"trip_id"`
+	OngoingTripID      string    `json:"ongoing_trip_id"`
+	DriverID           string    `json:"driver_id"`
+	FinalFare          float64   `json:"final_fare"`
+	CurrencyCode       string    `json:"currency_code"`
+	PaymentCollectedAt time.Time `json:"payment_collected_at"`
+	SentAt             time.Time `json:"sent_at"`
+}
+
+type TripCompletedParams struct {
+	RequestID          string
+	TripID             string
+	OngoingTripID      string
+	DriverID           string
+	FinalFare          float64
+	CurrencyCode       string
+	PaymentCollectedAt time.Time
+}
+
+func NewTripCompletedMessage(p TripCompletedParams) TripCompletedMessage {
+	return TripCompletedMessage{
+		Type:               "trip_completed",
+		RequestID:          p.RequestID,
+		TripID:             p.TripID,
+		OngoingTripID:      p.OngoingTripID,
+		DriverID:           p.DriverID,
+		FinalFare:          p.FinalFare,
+		CurrencyCode:       p.CurrencyCode,
+		PaymentCollectedAt: p.PaymentCollectedAt,
+		SentAt:             time.Now().UTC(),
+	}
+}

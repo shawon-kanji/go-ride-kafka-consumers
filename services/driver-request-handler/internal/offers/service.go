@@ -21,9 +21,11 @@ var (
 	ErrOfferForbidden   = errors.New("offer_forbidden")
 	ErrOfferNotWinnable = errors.New("offer_not_winnable")
 
-	ErrTripNotFound     = errors.New("trip_not_found")
-	ErrTripForbidden    = errors.New("trip_forbidden")
-	ErrTripNotStartable = errors.New("trip_not_startable")
+	ErrTripNotFound       = errors.New("trip_not_found")
+	ErrTripForbidden      = errors.New("trip_forbidden")
+	ErrTripNotStartable   = errors.New("trip_not_startable")
+	ErrTripNotEndable     = errors.New("trip_not_endable")
+	ErrTripNotCollectable = errors.New("trip_not_collectable")
 )
 
 type AcceptResult struct {
@@ -34,6 +36,16 @@ type AcceptResult struct {
 
 type StartTripResult struct {
 	OngoingTrip schemamodels.OngoingTrip
+}
+
+type EndTripResult struct {
+	OngoingTrip  schemamodels.OngoingTrip
+	CurrencyCode string
+}
+
+type CollectPaymentResult struct {
+	OngoingTrip  schemamodels.OngoingTrip
+	CurrencyCode string
 }
 
 type Service struct {
@@ -301,6 +313,242 @@ func (s *Service) StartTrip(ctx context.Context, ongoingTripID, driverID uuid.UU
 
 	if err := s.producer.PublishRideStarted(ctx, event); err != nil {
 		return StartTripResult{}, fmt.Errorf("publish ride started request_id=%s: %w", event.RequestID, err)
+	}
+
+	return result, nil
+}
+
+// EndTrip marks a trip ended once the driver has reached the destination:
+// in_progress -> awaiting_payment. FinalFare is the already-locked
+// trip_fares.total_fare copied as-is, no live recalculation from distance/
+// duration (the platform doesn't track that) — same trust-the-driver's-tap
+// model as accept/start-trip.
+func (s *Service) EndTrip(ctx context.Context, ongoingTripID, driverID uuid.UUID) (EndTripResult, error) {
+	now := time.Now().UTC()
+	var result EndTripResult
+	var correlationID *string
+
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var trip schemamodels.OngoingTrip
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ?", ongoingTripID).
+			Take(&trip).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrTripNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("lock ongoing trip id=%s: %w", ongoingTripID, err)
+		}
+
+		if trip.DriverID != driverID {
+			return ErrTripForbidden
+		}
+		if trip.Status != schemamodels.OngoingTripStatusInProgress {
+			return ErrTripNotEndable
+		}
+
+		var request schemamodels.TripRequest
+		if err := tx.Where("request_id = ?", trip.RequestID).Take(&request).Error; err == nil {
+			correlationID = request.CorrelationID
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("load trip request request_id=%s: %w", trip.RequestID, err)
+		}
+
+		var finalFare float64
+		var currencyCode string
+		if request.FareID != nil {
+			var fare schemamodels.TripFare
+			if err := tx.Where("fare_id = ?", *request.FareID).Take(&fare).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("load trip fare fare_id=%s: %w", request.FareID.String(), err)
+			} else if err == nil {
+				finalFare = fare.TotalFare
+				currencyCode = fare.CurrencyCode
+			}
+		}
+
+		paymentStatus := schemamodels.OngoingTripPaymentStatusPending
+		if err := tx.Model(&schemamodels.OngoingTrip{}).
+			Where("id = ?", trip.ID).
+			Updates(map[string]any{
+				"status":         schemamodels.OngoingTripStatusAwaitingPayment,
+				"ended_at":       now,
+				"final_fare":     finalFare,
+				"payment_status": paymentStatus,
+				"updated_at":     now,
+			}).Error; err != nil {
+			return fmt.Errorf("mark ongoing trip awaiting_payment: %w", err)
+		}
+		trip.Status = schemamodels.OngoingTripStatusAwaitingPayment
+		trip.EndedAt = &now
+		trip.FinalFare = &finalFare
+		trip.PaymentStatus = &paymentStatus
+
+		eventPayload, err := json.Marshal(map[string]any{
+			"ongoing_trip_id": trip.ID,
+			"final_fare":      finalFare,
+			"currency_code":   currencyCode,
+		})
+		if err != nil {
+			return fmt.Errorf("marshal trip history payload: %w", err)
+		}
+		fromStatus := schemamodels.OngoingTripStatusInProgress
+		toStatus := schemamodels.OngoingTripStatusAwaitingPayment
+		history := schemamodels.TripHistory{
+			ID:            uuid.New(),
+			RequestID:     trip.RequestID,
+			TripID:        trip.TripID,
+			RiderID:       &trip.RiderID,
+			DriverID:      &driverID,
+			EventType:     "trip_ended",
+			FromStatus:    &fromStatus,
+			ToStatus:      &toStatus,
+			EventPayload:  eventPayload,
+			CorrelationID: correlationID,
+			CreatedAt:     now,
+		}
+		if err := tx.Create(&history).Error; err != nil {
+			return fmt.Errorf("create trip history: %w", err)
+		}
+
+		result = EndTripResult{OngoingTrip: trip, CurrencyCode: currencyCode}
+		return nil
+	})
+	if err != nil {
+		return EndTripResult{}, err
+	}
+
+	event := events.RideEndedV1{
+		RequestID:     result.OngoingTrip.RequestID.String(),
+		TripID:        result.OngoingTrip.TripID.String(),
+		OngoingTripID: result.OngoingTrip.ID.String(),
+		RiderID:       result.OngoingTrip.RiderID.String(),
+		DriverID:      driverID.String(),
+		FinalFare:     *result.OngoingTrip.FinalFare,
+		CurrencyCode:  result.CurrencyCode,
+		EndedAt:       now,
+		EventID:       result.OngoingTrip.ID.String() + ":ended",
+		PublishedAt:   time.Now().UTC(),
+	}
+	if correlationID != nil {
+		event.CorrelationID = *correlationID
+	}
+
+	if err := s.producer.PublishRideEnded(ctx, event); err != nil {
+		return EndTripResult{}, fmt.Errorf("publish ride ended request_id=%s: %w", event.RequestID, err)
+	}
+
+	return result, nil
+}
+
+// CollectPayment fully closes a trip once the driver confirms cash was
+// physically collected: awaiting_payment -> completed. Manual/cash-only
+// confirmation — no payment method field, no gateway integration.
+func (s *Service) CollectPayment(ctx context.Context, ongoingTripID, driverID uuid.UUID) (CollectPaymentResult, error) {
+	now := time.Now().UTC()
+	var result CollectPaymentResult
+	var correlationID *string
+
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var trip schemamodels.OngoingTrip
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ?", ongoingTripID).
+			Take(&trip).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrTripNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("lock ongoing trip id=%s: %w", ongoingTripID, err)
+		}
+
+		if trip.DriverID != driverID {
+			return ErrTripForbidden
+		}
+		if trip.Status != schemamodels.OngoingTripStatusAwaitingPayment {
+			return ErrTripNotCollectable
+		}
+
+		var request schemamodels.TripRequest
+		if err := tx.Where("request_id = ?", trip.RequestID).Take(&request).Error; err == nil {
+			correlationID = request.CorrelationID
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("load trip request request_id=%s: %w", trip.RequestID, err)
+		}
+
+		var currencyCode string
+		if request.FareID != nil {
+			var fare schemamodels.TripFare
+			if err := tx.Where("fare_id = ?", *request.FareID).Take(&fare).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("load trip fare fare_id=%s: %w", request.FareID.String(), err)
+			} else if err == nil {
+				currencyCode = fare.CurrencyCode
+			}
+		}
+
+		paymentStatus := schemamodels.OngoingTripPaymentStatusCollected
+		if err := tx.Model(&schemamodels.OngoingTrip{}).
+			Where("id = ?", trip.ID).
+			Updates(map[string]any{
+				"status":               schemamodels.OngoingTripStatusCompleted,
+				"completed_at":         now,
+				"payment_status":       paymentStatus,
+				"payment_collected_at": now,
+				"updated_at":           now,
+			}).Error; err != nil {
+			return fmt.Errorf("mark ongoing trip completed: %w", err)
+		}
+		trip.Status = schemamodels.OngoingTripStatusCompleted
+		trip.CompletedAt = &now
+		trip.PaymentStatus = &paymentStatus
+		trip.PaymentCollectedAt = &now
+
+		eventPayload, err := json.Marshal(map[string]any{"ongoing_trip_id": trip.ID})
+		if err != nil {
+			return fmt.Errorf("marshal trip history payload: %w", err)
+		}
+		fromStatus := schemamodels.OngoingTripStatusAwaitingPayment
+		toStatus := schemamodels.OngoingTripStatusCompleted
+		history := schemamodels.TripHistory{
+			ID:            uuid.New(),
+			RequestID:     trip.RequestID,
+			TripID:        trip.TripID,
+			RiderID:       &trip.RiderID,
+			DriverID:      &driverID,
+			EventType:     "payment_collected",
+			FromStatus:    &fromStatus,
+			ToStatus:      &toStatus,
+			EventPayload:  eventPayload,
+			CorrelationID: correlationID,
+			CreatedAt:     now,
+		}
+		if err := tx.Create(&history).Error; err != nil {
+			return fmt.Errorf("create trip history: %w", err)
+		}
+
+		result = CollectPaymentResult{OngoingTrip: trip, CurrencyCode: currencyCode}
+		return nil
+	})
+	if err != nil {
+		return CollectPaymentResult{}, err
+	}
+
+	event := events.RideCompletedV1{
+		RequestID:          result.OngoingTrip.RequestID.String(),
+		TripID:             result.OngoingTrip.TripID.String(),
+		OngoingTripID:      result.OngoingTrip.ID.String(),
+		RiderID:            result.OngoingTrip.RiderID.String(),
+		DriverID:           driverID.String(),
+		FinalFare:          *result.OngoingTrip.FinalFare,
+		CurrencyCode:       result.CurrencyCode,
+		PaymentCollectedAt: now,
+		EventID:            result.OngoingTrip.ID.String() + ":completed",
+		PublishedAt:        time.Now().UTC(),
+	}
+	if correlationID != nil {
+		event.CorrelationID = *correlationID
+	}
+
+	if err := s.producer.PublishRideCompleted(ctx, event); err != nil {
+		return CollectPaymentResult{}, fmt.Errorf("publish ride completed request_id=%s: %w", event.RequestID, err)
 	}
 
 	return result, nil

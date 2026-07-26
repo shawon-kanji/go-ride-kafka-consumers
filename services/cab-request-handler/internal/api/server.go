@@ -30,7 +30,7 @@ const (
 
 var (
 	activeTripRequestStatuses = []string{"search_started", "searching", "offered", "driver_accepted", "driver_rejected"}
-	activeOngoingTripStatuses = []string{"assigned", "driver_arriving", "in_progress"}
+	activeOngoingTripStatuses = []string{"assigned", "driver_arriving", "in_progress", "awaiting_payment"}
 )
 
 var (
@@ -138,19 +138,23 @@ type farePayload struct {
 }
 
 type ongoingTripPayload struct {
-	TripRecordID string     `json:"trip_record_id"`
-	RequestID    string     `json:"request_id"`
-	TripID       string     `json:"trip_id"`
-	DriverID     string     `json:"driver_id"`
-	Status       string     `json:"status"`
-	PickupLat    float64    `json:"pickup_lat"`
-	PickupLng    float64    `json:"pickup_lng"`
-	DropoffLat   float64    `json:"dropoff_lat"`
-	DropoffLng   float64    `json:"dropoff_lng"`
-	AssignedAt   time.Time  `json:"assigned_at"`
-	StartedAt    *time.Time `json:"started_at,omitempty"`
-	CompletedAt  *time.Time `json:"completed_at,omitempty"`
-	CancelledAt  *time.Time `json:"cancelled_at,omitempty"`
+	TripRecordID       string     `json:"trip_record_id"`
+	RequestID          string     `json:"request_id"`
+	TripID             string     `json:"trip_id"`
+	DriverID           string     `json:"driver_id"`
+	Status             string     `json:"status"`
+	PickupLat          float64    `json:"pickup_lat"`
+	PickupLng          float64    `json:"pickup_lng"`
+	DropoffLat         float64    `json:"dropoff_lat"`
+	DropoffLng         float64    `json:"dropoff_lng"`
+	AssignedAt         time.Time  `json:"assigned_at"`
+	StartedAt          *time.Time `json:"started_at,omitempty"`
+	EndedAt            *time.Time `json:"ended_at,omitempty"`
+	CompletedAt        *time.Time `json:"completed_at,omitempty"`
+	CancelledAt        *time.Time `json:"cancelled_at,omitempty"`
+	FinalFare          *float64   `json:"final_fare,omitempty"`
+	PaymentStatus      *string    `json:"payment_status,omitempty"`
+	PaymentCollectedAt *time.Time `json:"payment_collected_at,omitempty"`
 }
 
 func NewServer(cfg config.Config, db *gorm.DB, producer kafka.Producer) *Server {
@@ -428,19 +432,23 @@ func (s *Server) handleCurrentTrip(w http.ResponseWriter, r *http.Request) {
 
 	if ongoingTrip != nil {
 		response.OngoingTrip = &ongoingTripPayload{
-			TripRecordID: ongoingTrip.ID.String(),
-			RequestID:    ongoingTrip.RequestID.String(),
-			TripID:       ongoingTrip.TripID.String(),
-			DriverID:     ongoingTrip.DriverID.String(),
-			Status:       ongoingTrip.Status,
-			PickupLat:    ongoingTrip.PickupLat,
-			PickupLng:    ongoingTrip.PickupLng,
-			DropoffLat:   ongoingTrip.DropoffLat,
-			DropoffLng:   ongoingTrip.DropoffLng,
-			AssignedAt:   ongoingTrip.AssignedAt,
-			StartedAt:    ongoingTrip.StartedAt,
-			CompletedAt:  ongoingTrip.CompletedAt,
-			CancelledAt:  ongoingTrip.CancelledAt,
+			TripRecordID:       ongoingTrip.ID.String(),
+			RequestID:          ongoingTrip.RequestID.String(),
+			TripID:             ongoingTrip.TripID.String(),
+			DriverID:           ongoingTrip.DriverID.String(),
+			Status:             ongoingTrip.Status,
+			PickupLat:          ongoingTrip.PickupLat,
+			PickupLng:          ongoingTrip.PickupLng,
+			DropoffLat:         ongoingTrip.DropoffLat,
+			DropoffLng:         ongoingTrip.DropoffLng,
+			AssignedAt:         ongoingTrip.AssignedAt,
+			StartedAt:          ongoingTrip.StartedAt,
+			EndedAt:            ongoingTrip.EndedAt,
+			CompletedAt:        ongoingTrip.CompletedAt,
+			CancelledAt:        ongoingTrip.CancelledAt,
+			FinalFare:          ongoingTrip.FinalFare,
+			PaymentStatus:      ongoingTrip.PaymentStatus,
+			PaymentCollectedAt: ongoingTrip.PaymentCollectedAt,
 		}
 	}
 

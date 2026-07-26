@@ -8,15 +8,17 @@ import (
 )
 
 type Config struct {
-	ServiceName   string
-	HTTPAddr      string
-	DB            DBConfig
-	KafkaBrokers  []string
-	AssignedTopic string
-	StartedTopic  string
-	JWTSecret     string
-	JWTIssuer     string
-	JWTAudience   string
+	ServiceName    string
+	HTTPAddr       string
+	DB             DBConfig
+	KafkaBrokers   []string
+	AssignedTopic  string
+	StartedTopic   string
+	EndedTopic     string
+	CompletedTopic string
+	JWTSecret      string
+	JWTIssuer      string
+	JWTAudience    string
 }
 
 type DBConfig struct {
@@ -45,12 +47,14 @@ func Load() (Config, error) {
 			Name:     getEnv("DB_NAME", "go_ride"),
 			SSLMode:  getEnv("DB_SSLMODE", "disable"),
 		},
-		KafkaBrokers:  splitAndTrim(getEnv("KAFKA_BROKERS", "localhost:9094")),
-		AssignedTopic: getEnv("KAFKA_ASSIGNED_TOPIC", "ride.assigned.v1"),
-		StartedTopic:  getEnv("KAFKA_STARTED_TOPIC", "ride.started.v1"),
-		JWTSecret:     getEnv("JWT_SECRET", ""),
-		JWTIssuer:     getEnv("JWT_ISSUER", "go-ride-backend"),
-		JWTAudience:   getEnv("JWT_AUDIENCE", "go-ride-drivers"),
+		KafkaBrokers:   splitAndTrim(getEnv("KAFKA_BROKERS", "localhost:9094")),
+		AssignedTopic:  getEnv("KAFKA_ASSIGNED_TOPIC", "ride.assigned.v1"),
+		StartedTopic:   getEnv("KAFKA_STARTED_TOPIC", "ride.started.v1"),
+		EndedTopic:     getEnv("KAFKA_ENDED_TOPIC", "ride.ended.v1"),
+		CompletedTopic: getEnv("KAFKA_COMPLETED_TOPIC", "ride.completed.v1"),
+		JWTSecret:      getEnv("JWT_SECRET", ""),
+		JWTIssuer:      getEnv("JWT_ISSUER", "go-ride-backend"),
+		JWTAudience:    getEnv("JWT_AUDIENCE", "go-ride-drivers"),
 	}
 
 	if len(cfg.KafkaBrokers) == 0 {
@@ -61,6 +65,12 @@ func Load() (Config, error) {
 	}
 	if cfg.StartedTopic == "" {
 		return Config{}, fmt.Errorf("KAFKA_STARTED_TOPIC is required")
+	}
+	if cfg.EndedTopic == "" {
+		return Config{}, fmt.Errorf("KAFKA_ENDED_TOPIC is required")
+	}
+	if cfg.CompletedTopic == "" {
+		return Config{}, fmt.Errorf("KAFKA_COMPLETED_TOPIC is required")
 	}
 	if cfg.HTTPAddr == "" {
 		return Config{}, fmt.Errorf("HTTP_ADDR is required")

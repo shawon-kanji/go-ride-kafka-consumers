@@ -25,17 +25,22 @@ type errorResponse struct {
 }
 
 type ongoingTripPayload struct {
-	TripRecordID string     `json:"trip_record_id"`
-	RequestID    string     `json:"request_id"`
-	TripID       string     `json:"trip_id"`
-	DriverID     string     `json:"driver_id"`
-	Status       string     `json:"status"`
-	PickupLat    float64    `json:"pickup_lat"`
-	PickupLng    float64    `json:"pickup_lng"`
-	DropoffLat   float64    `json:"dropoff_lat"`
-	DropoffLng   float64    `json:"dropoff_lng"`
-	AssignedAt   time.Time  `json:"assigned_at"`
-	StartedAt    *time.Time `json:"started_at,omitempty"`
+	TripRecordID       string     `json:"trip_record_id"`
+	RequestID          string     `json:"request_id"`
+	TripID             string     `json:"trip_id"`
+	DriverID           string     `json:"driver_id"`
+	Status             string     `json:"status"`
+	PickupLat          float64    `json:"pickup_lat"`
+	PickupLng          float64    `json:"pickup_lng"`
+	DropoffLat         float64    `json:"dropoff_lat"`
+	DropoffLng         float64    `json:"dropoff_lng"`
+	AssignedAt         time.Time  `json:"assigned_at"`
+	StartedAt          *time.Time `json:"started_at,omitempty"`
+	EndedAt            *time.Time `json:"ended_at,omitempty"`
+	CompletedAt        *time.Time `json:"completed_at,omitempty"`
+	FinalFare          *float64   `json:"final_fare,omitempty"`
+	PaymentStatus      *string    `json:"payment_status,omitempty"`
+	PaymentCollectedAt *time.Time `json:"payment_collected_at,omitempty"`
 }
 
 type tripRequestPayload struct {
@@ -60,6 +65,16 @@ type acceptOfferResponse struct {
 	OngoingTrip ongoingTripPayload `json:"ongoing_trip"`
 }
 
+type endTripResponse struct {
+	OngoingTrip  ongoingTripPayload `json:"ongoing_trip"`
+	CurrencyCode string             `json:"currency_code,omitempty"`
+}
+
+type collectPaymentResponse struct {
+	OngoingTrip  ongoingTripPayload `json:"ongoing_trip"`
+	CurrencyCode string             `json:"currency_code,omitempty"`
+}
+
 type Server struct {
 	cfg      config.Config
 	verifier *auth.Verifier
@@ -80,6 +95,8 @@ func NewServer(cfg config.Config, verifier *auth.Verifier, offerService *offers.
 	mux.HandleFunc("GET /healthz", server.handleHealthz)
 	mux.HandleFunc("POST /job-offers/{job_offer_id}/accept", server.handleAcceptOffer)
 	mux.HandleFunc("POST /ongoing-trips/{ongoing_trip_id}/start", server.handleStartTrip)
+	mux.HandleFunc("POST /ongoing-trips/{ongoing_trip_id}/end", server.handleEndTrip)
+	mux.HandleFunc("POST /ongoing-trips/{ongoing_trip_id}/collect-payment", server.handleCollectPayment)
 
 	server.http = &http.Server{
 		Addr:              cfg.HTTPAddr,
@@ -238,19 +255,126 @@ func (s *Server) handleStartTrip(w http.ResponseWriter, r *http.Request) {
 	log.Printf("driver started trip ongoing_trip_id=%s trip_id=%s driver_id=%s", response.TripRecordID, response.TripID, driverID)
 }
 
+func (s *Server) handleEndTrip(w http.ResponseWriter, r *http.Request) {
+	token := bearerToken(r)
+	if token == "" {
+		writeJSONError(w, http.StatusUnauthorized, "unauthorized", "missing bearer token")
+		return
+	}
+
+	claims, err := s.verifier.Parse(token)
+	if err != nil || claims.Role != auth.DriverRole {
+		writeJSONError(w, http.StatusUnauthorized, "unauthorized", "invalid or non-driver token")
+		return
+	}
+
+	driverID, err := uuid.Parse(claims.UserID)
+	if err != nil {
+		writeJSONError(w, http.StatusUnauthorized, "unauthorized", "invalid driver id in token")
+		return
+	}
+
+	ongoingTripID, err := uuid.Parse(r.PathValue("ongoing_trip_id"))
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid_ongoing_trip_id", "ongoing_trip_id must be a valid UUID")
+		return
+	}
+
+	result, err := s.offers.EndTrip(r.Context(), ongoingTripID, driverID)
+	if err != nil {
+		switch {
+		case errors.Is(err, offers.ErrTripNotFound):
+			writeJSONError(w, http.StatusNotFound, "trip_not_found", "ongoing trip was not found")
+		case errors.Is(err, offers.ErrTripForbidden):
+			writeJSONError(w, http.StatusForbidden, "trip_forbidden", "ongoing trip does not belong to this driver")
+		case errors.Is(err, offers.ErrTripNotEndable):
+			writeJSONError(w, http.StatusConflict, "trip_not_endable", "trip is not in an endable state")
+		default:
+			log.Printf("end trip ongoing_trip_id=%s driver_id=%s: %v", ongoingTripID, driverID, err)
+			writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to end trip")
+		}
+		return
+	}
+
+	response := endTripResponse{
+		OngoingTrip:  ongoingTripPayloadFrom(result.OngoingTrip),
+		CurrencyCode: result.CurrencyCode,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(response)
+	log.Printf("driver ended trip ongoing_trip_id=%s trip_id=%s driver_id=%s", response.OngoingTrip.TripRecordID, response.OngoingTrip.TripID, driverID)
+}
+
+func (s *Server) handleCollectPayment(w http.ResponseWriter, r *http.Request) {
+	token := bearerToken(r)
+	if token == "" {
+		writeJSONError(w, http.StatusUnauthorized, "unauthorized", "missing bearer token")
+		return
+	}
+
+	claims, err := s.verifier.Parse(token)
+	if err != nil || claims.Role != auth.DriverRole {
+		writeJSONError(w, http.StatusUnauthorized, "unauthorized", "invalid or non-driver token")
+		return
+	}
+
+	driverID, err := uuid.Parse(claims.UserID)
+	if err != nil {
+		writeJSONError(w, http.StatusUnauthorized, "unauthorized", "invalid driver id in token")
+		return
+	}
+
+	ongoingTripID, err := uuid.Parse(r.PathValue("ongoing_trip_id"))
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid_ongoing_trip_id", "ongoing_trip_id must be a valid UUID")
+		return
+	}
+
+	result, err := s.offers.CollectPayment(r.Context(), ongoingTripID, driverID)
+	if err != nil {
+		switch {
+		case errors.Is(err, offers.ErrTripNotFound):
+			writeJSONError(w, http.StatusNotFound, "trip_not_found", "ongoing trip was not found")
+		case errors.Is(err, offers.ErrTripForbidden):
+			writeJSONError(w, http.StatusForbidden, "trip_forbidden", "ongoing trip does not belong to this driver")
+		case errors.Is(err, offers.ErrTripNotCollectable):
+			writeJSONError(w, http.StatusConflict, "trip_not_collectable", "trip is not awaiting payment")
+		default:
+			log.Printf("collect payment ongoing_trip_id=%s driver_id=%s: %v", ongoingTripID, driverID, err)
+			writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to collect payment")
+		}
+		return
+	}
+
+	response := collectPaymentResponse{
+		OngoingTrip:  ongoingTripPayloadFrom(result.OngoingTrip),
+		CurrencyCode: result.CurrencyCode,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(response)
+	log.Printf("driver collected payment ongoing_trip_id=%s trip_id=%s driver_id=%s", response.OngoingTrip.TripRecordID, response.OngoingTrip.TripID, driverID)
+}
+
 func ongoingTripPayloadFrom(trip schemamodels.OngoingTrip) ongoingTripPayload {
 	return ongoingTripPayload{
-		TripRecordID: trip.ID.String(),
-		RequestID:    trip.RequestID.String(),
-		TripID:       trip.TripID.String(),
-		DriverID:     trip.DriverID.String(),
-		Status:       trip.Status,
-		PickupLat:    trip.PickupLat,
-		PickupLng:    trip.PickupLng,
-		DropoffLat:   trip.DropoffLat,
-		DropoffLng:   trip.DropoffLng,
-		AssignedAt:   trip.AssignedAt,
-		StartedAt:    trip.StartedAt,
+		TripRecordID:       trip.ID.String(),
+		RequestID:          trip.RequestID.String(),
+		TripID:             trip.TripID.String(),
+		DriverID:           trip.DriverID.String(),
+		Status:             trip.Status,
+		PickupLat:          trip.PickupLat,
+		PickupLng:          trip.PickupLng,
+		DropoffLat:         trip.DropoffLat,
+		DropoffLng:         trip.DropoffLng,
+		AssignedAt:         trip.AssignedAt,
+		StartedAt:          trip.StartedAt,
+		EndedAt:            trip.EndedAt,
+		CompletedAt:        trip.CompletedAt,
+		FinalFare:          trip.FinalFare,
+		PaymentStatus:      trip.PaymentStatus,
+		PaymentCollectedAt: trip.PaymentCollectedAt,
 	}
 }
 

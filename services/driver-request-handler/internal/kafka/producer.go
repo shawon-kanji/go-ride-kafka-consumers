@@ -15,14 +15,20 @@ import (
 type Producer interface {
 	PublishRideAssigned(ctx context.Context, event events.RideAssignedV1) error
 	PublishRideStarted(ctx context.Context, event events.RideStartedV1) error
+	PublishRideEnded(ctx context.Context, event events.RideEndedV1) error
+	PublishRideCompleted(ctx context.Context, event events.RideCompletedV1) error
 	Close() error
 }
 
 type RideAssignedProducer struct {
-	writer        *kafkago.Writer
-	topic         string
-	startedWriter *kafkago.Writer
-	startedTopic  string
+	writer          *kafkago.Writer
+	topic           string
+	startedWriter   *kafkago.Writer
+	startedTopic    string
+	endedWriter     *kafkago.Writer
+	endedTopic      string
+	completedWriter *kafkago.Writer
+	completedTopic  string
 }
 
 func NewRideAssignedProducer(cfg config.Config) *RideAssignedProducer {
@@ -48,11 +54,37 @@ func NewRideAssignedProducer(cfg config.Config) *RideAssignedProducer {
 		AllowAutoTopicCreation: false,
 	}
 
+	endedWriter := &kafkago.Writer{
+		Addr:                   kafkago.TCP(cfg.KafkaBrokers...),
+		Topic:                  cfg.EndedTopic,
+		Balancer:               &kafkago.Hash{},
+		RequiredAcks:           kafkago.RequireOne,
+		BatchTimeout:           50 * time.Millisecond,
+		WriteTimeout:           5 * time.Second,
+		ReadTimeout:            5 * time.Second,
+		AllowAutoTopicCreation: false,
+	}
+
+	completedWriter := &kafkago.Writer{
+		Addr:                   kafkago.TCP(cfg.KafkaBrokers...),
+		Topic:                  cfg.CompletedTopic,
+		Balancer:               &kafkago.Hash{},
+		RequiredAcks:           kafkago.RequireOne,
+		BatchTimeout:           50 * time.Millisecond,
+		WriteTimeout:           5 * time.Second,
+		ReadTimeout:            5 * time.Second,
+		AllowAutoTopicCreation: false,
+	}
+
 	return &RideAssignedProducer{
-		writer:        writer,
-		topic:         cfg.AssignedTopic,
-		startedWriter: startedWriter,
-		startedTopic:  cfg.StartedTopic,
+		writer:          writer,
+		topic:           cfg.AssignedTopic,
+		startedWriter:   startedWriter,
+		startedTopic:    cfg.StartedTopic,
+		endedWriter:     endedWriter,
+		endedTopic:      cfg.EndedTopic,
+		completedWriter: completedWriter,
+		completedTopic:  cfg.CompletedTopic,
 	}
 }
 
@@ -94,9 +126,53 @@ func (p *RideAssignedProducer) PublishRideStarted(ctx context.Context, event eve
 	return nil
 }
 
+func (p *RideAssignedProducer) PublishRideEnded(ctx context.Context, event events.RideEndedV1) error {
+	payload, err := json.Marshal(event)
+	if err != nil {
+		return fmt.Errorf("marshal ride ended event: %w", err)
+	}
+
+	message := kafkago.Message{
+		Key:   []byte(event.RequestID),
+		Value: payload,
+		Time:  event.PublishedAt,
+	}
+
+	if err := p.endedWriter.WriteMessages(ctx, message); err != nil {
+		return fmt.Errorf("write kafka message topic=%s: %w", p.endedTopic, err)
+	}
+
+	return nil
+}
+
+func (p *RideAssignedProducer) PublishRideCompleted(ctx context.Context, event events.RideCompletedV1) error {
+	payload, err := json.Marshal(event)
+	if err != nil {
+		return fmt.Errorf("marshal ride completed event: %w", err)
+	}
+
+	message := kafkago.Message{
+		Key:   []byte(event.RequestID),
+		Value: payload,
+		Time:  event.PublishedAt,
+	}
+
+	if err := p.completedWriter.WriteMessages(ctx, message); err != nil {
+		return fmt.Errorf("write kafka message topic=%s: %w", p.completedTopic, err)
+	}
+
+	return nil
+}
+
 func (p *RideAssignedProducer) Close() error {
 	if err := p.writer.Close(); err != nil {
 		return err
 	}
-	return p.startedWriter.Close()
+	if err := p.startedWriter.Close(); err != nil {
+		return err
+	}
+	if err := p.endedWriter.Close(); err != nil {
+		return err
+	}
+	return p.completedWriter.Close()
 }

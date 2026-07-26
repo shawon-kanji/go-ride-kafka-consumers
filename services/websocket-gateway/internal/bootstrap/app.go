@@ -15,6 +15,8 @@ import (
 	"go-ride-kafka-consumers/services/websocket-gateway/internal/offers"
 	"go-ride-kafka-consumers/services/websocket-gateway/internal/presence"
 	"go-ride-kafka-consumers/services/websocket-gateway/internal/tracking"
+	"go-ride-kafka-consumers/services/websocket-gateway/internal/tripcomplete"
+	"go-ride-kafka-consumers/services/websocket-gateway/internal/tripend"
 	"go-ride-kafka-consumers/services/websocket-gateway/internal/tripstart"
 	"go-ride-kafka-consumers/services/websocket-gateway/internal/ws"
 
@@ -22,18 +24,22 @@ import (
 )
 
 type App struct {
-	cfg                 config.Config
-	sqlDB               *sql.DB
-	bus                 *presence.Bus
-	assignmentBus       *presence.Bus
-	locationBus         *presence.Bus
-	tripStartedBus      *presence.Bus
-	locationStore       *presence.Store
-	consumer            kafka.Consumer
-	assignmentConsumer  kafka.Consumer
-	locationConsumer    kafka.Consumer
-	rideStartedConsumer kafka.Consumer
-	server              *http.Server
+	cfg                   config.Config
+	sqlDB                 *sql.DB
+	bus                   *presence.Bus
+	assignmentBus         *presence.Bus
+	locationBus           *presence.Bus
+	tripStartedBus        *presence.Bus
+	tripEndedBus          *presence.Bus
+	tripCompletedBus      *presence.Bus
+	locationStore         *presence.Store
+	consumer              kafka.Consumer
+	assignmentConsumer    kafka.Consumer
+	locationConsumer      kafka.Consumer
+	rideStartedConsumer   kafka.Consumer
+	rideEndedConsumer     kafka.Consumer
+	rideCompletedConsumer kafka.Consumer
+	server                *http.Server
 }
 
 func New() (*App, error) {
@@ -80,6 +86,16 @@ func New() (*App, error) {
 	tripStartedBus := presence.NewBus(cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB, cfg.RedisTripStartedChannel)
 	tripStartedNotifier := tripstart.NewNotifier(locationStore, tripStartedBus)
 	rideStartedConsumer := kafka.NewRideStartedConsumer(cfg, tripStartedNotifier)
+
+	tripEndedDeliverer := tripend.NewDeliverer(riderHub)
+	tripEndedBus := presence.NewBus(cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB, cfg.RedisTripEndedChannel)
+	tripEndedNotifier := tripend.NewNotifier(tripEndedBus)
+	rideEndedConsumer := kafka.NewRideEndedConsumer(cfg, tripEndedNotifier)
+
+	tripCompletedDeliverer := tripcomplete.NewDeliverer(riderHub)
+	tripCompletedBus := presence.NewBus(cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB, cfg.RedisTripCompletedChannel)
+	tripCompletedNotifier := tripcomplete.NewNotifier(tripCompletedBus)
+	rideCompletedConsumer := kafka.NewRideCompletedConsumer(cfg, tripCompletedNotifier)
 
 	verifier := auth.NewVerifier(cfg.JWTSecret, cfg.JWTIssuer, cfg.JWTAudience)
 
@@ -144,19 +160,41 @@ func New() (*App, error) {
 		}
 	}()
 
+	go func() {
+		bgCtx := context.Background()
+		if err := tripEndedBus.Subscribe(bgCtx, func(payload []byte) {
+			tripEndedDeliverer.HandleBroadcast(bgCtx, payload)
+		}); err != nil {
+			log.Printf("websocket_gateway: trip ended presence subscribe stopped: %v", err)
+		}
+	}()
+
+	go func() {
+		bgCtx := context.Background()
+		if err := tripCompletedBus.Subscribe(bgCtx, func(payload []byte) {
+			tripCompletedDeliverer.HandleBroadcast(bgCtx, payload)
+		}); err != nil {
+			log.Printf("websocket_gateway: trip completed presence subscribe stopped: %v", err)
+		}
+	}()
+
 	return &App{
-		cfg:                 cfg,
-		sqlDB:               sqlDB,
-		bus:                 bus,
-		assignmentBus:       assignmentBus,
-		locationBus:         locationBus,
-		tripStartedBus:      tripStartedBus,
-		locationStore:       locationStore,
-		consumer:            consumer,
-		assignmentConsumer:  assignmentConsumer,
-		locationConsumer:    locationConsumer,
-		rideStartedConsumer: rideStartedConsumer,
-		server:              httpServer,
+		cfg:                   cfg,
+		sqlDB:                 sqlDB,
+		bus:                   bus,
+		assignmentBus:         assignmentBus,
+		locationBus:           locationBus,
+		tripStartedBus:        tripStartedBus,
+		tripEndedBus:          tripEndedBus,
+		tripCompletedBus:      tripCompletedBus,
+		locationStore:         locationStore,
+		consumer:              consumer,
+		assignmentConsumer:    assignmentConsumer,
+		locationConsumer:      locationConsumer,
+		rideStartedConsumer:   rideStartedConsumer,
+		rideEndedConsumer:     rideEndedConsumer,
+		rideCompletedConsumer: rideCompletedConsumer,
+		server:                httpServer,
 	}, nil
 }
 
@@ -179,6 +217,12 @@ func (a *App) Run(ctx context.Context) error {
 		if err := a.tripStartedBus.Close(); err != nil {
 			log.Printf("close trip started redis bus: %v", err)
 		}
+		if err := a.tripEndedBus.Close(); err != nil {
+			log.Printf("close trip ended redis bus: %v", err)
+		}
+		if err := a.tripCompletedBus.Close(); err != nil {
+			log.Printf("close trip completed redis bus: %v", err)
+		}
 		if err := a.locationStore.Close(); err != nil {
 			log.Printf("close location redis store: %v", err)
 		}
@@ -188,7 +232,7 @@ func (a *App) Run(ctx context.Context) error {
 		return fmt.Errorf("ping sql db: %w", err)
 	}
 
-	errCh := make(chan error, 5)
+	errCh := make(chan error, 7)
 
 	go func() {
 		if err := a.consumer.Start(ctx); err != nil {
@@ -223,6 +267,22 @@ func (a *App) Run(ctx context.Context) error {
 	}()
 
 	go func() {
+		if err := a.rideEndedConsumer.Start(ctx); err != nil {
+			errCh <- fmt.Errorf("ride ended kafka consumer: %w", err)
+			return
+		}
+		errCh <- nil
+	}()
+
+	go func() {
+		if err := a.rideCompletedConsumer.Start(ctx); err != nil {
+			errCh <- fmt.Errorf("ride completed kafka consumer: %w", err)
+			return
+		}
+		errCh <- nil
+	}()
+
+	go func() {
 		if err := a.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			errCh <- fmt.Errorf("http server: %w", err)
 			return
@@ -236,7 +296,7 @@ func (a *App) Run(ctx context.Context) error {
 	}()
 
 	var firstErr error
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 7; i++ {
 		if err := <-errCh; err != nil && firstErr == nil {
 			firstErr = err
 		}
