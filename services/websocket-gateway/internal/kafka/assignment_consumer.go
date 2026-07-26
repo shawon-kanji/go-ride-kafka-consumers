@@ -9,7 +9,7 @@ import (
 
 	"go-ride-kafka-consumers/services/websocket-gateway/internal/assignments"
 	"go-ride-kafka-consumers/services/websocket-gateway/internal/config"
-	"go-ride-kafka-consumers/services/websocket-gateway/pkg/events"
+	"github.com/shawon-kanji/go-ride-utils/events"
 
 	kafkago "github.com/segmentio/kafka-go"
 )

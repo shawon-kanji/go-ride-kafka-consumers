@@ -13,10 +13,10 @@ import (
 
 	"go-ride-kafka-consumers/services/cab-request-handler/internal/config"
 	"go-ride-kafka-consumers/services/cab-request-handler/internal/kafka"
-	"go-ride-kafka-consumers/services/cab-request-handler/pkg/events"
 
 	"github.com/google/uuid"
 	schemamodels "github.com/shawon-kanji/go-ride-db-schema/models"
+	"github.com/shawon-kanji/go-ride-utils/events"
 	"gorm.io/gorm"
 )
 

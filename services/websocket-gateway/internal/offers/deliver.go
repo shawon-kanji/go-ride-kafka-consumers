@@ -6,7 +6,7 @@ import (
 	"log"
 
 	"go-ride-kafka-consumers/services/websocket-gateway/internal/ws"
-	"go-ride-kafka-consumers/services/websocket-gateway/pkg/events"
+	"github.com/shawon-kanji/go-ride-utils/events"
 
 	"github.com/google/uuid"
 )

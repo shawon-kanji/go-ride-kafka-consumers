@@ -11,7 +11,7 @@ import (
 	"go-ride-kafka-consumers/services/location-consumers/internal/config"
 	"go-ride-kafka-consumers/services/location-consumers/internal/db/models"
 	"go-ride-kafka-consumers/services/location-consumers/internal/domain/location"
-	"go-ride-kafka-consumers/services/location-consumers/pkg/events"
+	"github.com/shawon-kanji/go-ride-utils/events"
 
 	"github.com/google/uuid"
 	kafkago "github.com/segmentio/kafka-go"

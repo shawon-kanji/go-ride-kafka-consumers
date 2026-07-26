@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"go-ride-kafka-consumers/services/location-producers/internal/config"
-	"go-ride-kafka-consumers/services/location-producers/pkg/events"
+	"github.com/shawon-kanji/go-ride-utils/events"
 
 	kafkago "github.com/segmentio/kafka-go"
 )

@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"go-ride-kafka-consumers/services/driver-request-handler/internal/kafka"
-	"go-ride-kafka-consumers/services/driver-request-handler/pkg/events"
+	"github.com/shawon-kanji/go-ride-utils/events"
 
 	"github.com/google/uuid"
 	schemamodels "github.com/shawon-kanji/go-ride-db-schema/models"

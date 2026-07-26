@@ -6,7 +6,7 @@ import (
 	"fmt"
 
 	"go-ride-kafka-consumers/services/websocket-gateway/internal/presence"
-	"go-ride-kafka-consumers/services/websocket-gateway/pkg/events"
+	"github.com/shawon-kanji/go-ride-utils/events"
 )
 
 // Notifier reacts to a RideCompletedV1 by broadcasting a trip-completed

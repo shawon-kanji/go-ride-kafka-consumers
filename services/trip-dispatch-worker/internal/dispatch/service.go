@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"go-ride-kafka-consumers/services/trip-dispatch-worker/internal/config"
-	"go-ride-kafka-consumers/services/trip-dispatch-worker/pkg/events"
+	"github.com/shawon-kanji/go-ride-utils/events"
 
 	"github.com/google/uuid"
 	schemamodels "github.com/shawon-kanji/go-ride-db-schema/models"

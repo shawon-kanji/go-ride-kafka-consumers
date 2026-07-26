@@ -9,7 +9,7 @@ import (
 
 	"go-ride-kafka-consumers/services/trip-dispatch-worker/internal/config"
 	"go-ride-kafka-consumers/services/trip-dispatch-worker/internal/dispatch"
-	"go-ride-kafka-consumers/services/trip-dispatch-worker/pkg/events"
+	"github.com/shawon-kanji/go-ride-utils/events"
 
 	"github.com/google/uuid"
 	kafkago "github.com/segmentio/kafka-go"
