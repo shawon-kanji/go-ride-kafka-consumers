@@ -5,7 +5,8 @@ go 1.25.3
 require (
 	github.com/google/uuid v1.6.0
 	github.com/segmentio/kafka-go v0.4.47
-	github.com/shawon-kanji/go-ride-db-schema v0.3.3
+	github.com/shawon-kanji/go-ride-db-schema v0.3.4
+	github.com/shawon-kanji/go-ride-utils v0.1.0
 	gorm.io/driver/postgres v1.6.0
 	gorm.io/gorm v1.31.1
 )
@@ -17,9 +18,11 @@ require (
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect
-	github.com/klauspost/compress v1.15.9 // indirect
-	github.com/pierrec/lz4/v4 v4.1.15 // indirect
+	github.com/klauspost/compress v1.15.11 // indirect
+	github.com/pierrec/lz4/v4 v4.1.16 // indirect
+	github.com/stretchr/testify v1.9.0 // indirect
 	golang.org/x/crypto v0.36.0 // indirect
+	golang.org/x/net v0.38.0 // indirect
 	golang.org/x/sync v0.12.0 // indirect
 	golang.org/x/text v0.23.0 // indirect
 )

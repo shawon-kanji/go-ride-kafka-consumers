@@ -1,10 +1,10 @@
 go 1.25.3
 
 use (
-	./services/location-producers
-	./services/location-consumers
 	./services/cab-request-handler
+	./services/driver-request-handler
+	./services/location-consumers
+	./services/location-producers
 	./services/trip-dispatch-worker
 	./services/websocket-gateway
-	./services/driver-request-handler
 )
