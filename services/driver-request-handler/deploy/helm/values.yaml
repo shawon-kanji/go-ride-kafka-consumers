@@ -1,0 +1,57 @@
+image:
+  repository: go-ride/driver-request-handler
+  tag: latest
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+service:
+  enabled: true
+  port: 8084
+  targetPort: 8084
+
+ingress:
+  enabled: false
+  path: /driver
+  host: ""
+  className: ""
+  group: ""
+  annotations: {}
+
+probes:
+  enabled: true
+  path: /healthz
+  port: 8084
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+serviceAccount:
+  create: false
+  name: ""
+  annotations: {}
+
+env:
+  plain:
+    SERVICE_NAME: driver-request-handler
+    HTTP_ADDR: ":8084"
+    KAFKA_ASSIGNED_TOPIC: ride.assigned.v1
+    KAFKA_STARTED_TOPIC: ride.started.v1
+    KAFKA_ENDED_TOPIC: ride.ended.v1
+    KAFKA_COMPLETED_TOPIC: ride.completed.v1
+    DB_NAME: go_ride
+    DB_PORT: "5432"
+    DB_SSLMODE: disable
+    JWT_ISSUER: go-ride-backend
+    JWT_AUDIENCE: go-ride-drivers
+  secretRefs: []
+
+secretsManager:
+  enabled: false
+  dbCredentialsSecretName: ""
+  jwtSecretName: ""

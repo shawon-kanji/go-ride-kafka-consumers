@@ -8,3 +8,7 @@ use (
 	./services/trip-dispatch-worker
 	./services/websocket-gateway
 )
+
+// Local-only: points at the unpublished go-ride-utils/awssecrets package
+// until it's tagged and pushed. Remove once a real release exists.
+replace github.com/shawon-kanji/go-ride-utils => ../go-ride-utils

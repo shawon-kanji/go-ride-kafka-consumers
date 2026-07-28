@@ -42,8 +42,8 @@ type App struct {
 	server                *http.Server
 }
 
-func New() (*App, error) {
-	cfg, err := config.Load()
+func New(ctx context.Context) (*App, error) {
+	cfg, err := config.Load(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}

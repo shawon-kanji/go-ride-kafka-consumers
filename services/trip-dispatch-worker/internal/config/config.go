@@ -1,12 +1,14 @@
 package config
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/shawon-kanji/go-ride-utils/awssecrets"
 	"github.com/shawon-kanji/go-ride-utils/kafkatopics"
 )
 
@@ -43,10 +45,25 @@ type DBConfig struct {
 	SSLMode  string
 }
 
-func Load(mode string) (Config, error) {
+func Load(ctx context.Context, mode string) (Config, error) {
 	dbPort, err := getIntEnv("DB_PORT", 5432)
 	if err != nil {
 		return Config{}, fmt.Errorf("invalid DB_PORT: %w", err)
+	}
+
+	dbUser := getEnv("DB_USER", "postgres")
+	dbPassword := getEnv("DB_PASSWORD", "postgres")
+	if secretName := getEnv("DB_CREDENTIALS_SECRET_NAME", ""); secretName != "" {
+		values, err := awssecrets.FetchJSON(ctx, secretName)
+		if err != nil {
+			return Config{}, fmt.Errorf("fetch db credentials secret: %w", err)
+		}
+		if v, ok := values["DB_USER"]; ok {
+			dbUser = v
+		}
+		if v, ok := values["DB_PASSWORD"]; ok {
+			dbPassword = v
+		}
 	}
 
 	nearestDriversLimit, err := getIntEnv("NEAREST_DRIVERS_LIMIT", 10)
@@ -110,8 +127,8 @@ func Load(mode string) (Config, error) {
 		DB: DBConfig{
 			Host:     getEnv("DB_HOST", "localhost"),
 			Port:     dbPort,
-			User:     getEnv("DB_USER", "postgres"),
-			Password: getEnv("DB_PASSWORD", "postgres"),
+			User:     dbUser,
+			Password: dbPassword,
 			Name:     getEnv("DB_NAME", "go_ride"),
 			SSLMode:  getEnv("DB_SSLMODE", "disable"),
 		},

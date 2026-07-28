@@ -1,0 +1,29 @@
+replicaCount: 2
+
+ingress:
+  enabled: true
+  className: nginx
+  path: /ws
+
+env:
+  plain:
+    SERVICE_NAME: websocket-gateway
+    HTTP_ADDR: ":8083"
+    KAFKA_BROKERS: kafka.go-ride-local.svc.cluster.local:9092
+    KAFKA_CONSUMER_GROUP: websocket-gateway-group
+    KAFKA_OFFER_CREATED_TOPIC: driver.job_offer.created.v1
+    KAFKA_ASSIGNED_TOPIC: ride.assigned.v1
+    KAFKA_STARTED_TOPIC: ride.started.v1
+    KAFKA_ENDED_TOPIC: ride.ended.v1
+    KAFKA_COMPLETED_TOPIC: ride.completed.v1
+    KAFKA_LOCATION_TOPIC: driver.location.updated.v1
+    DB_HOST: postgres.go-ride-local.svc.cluster.local
+    DB_NAME: go_ride
+    DB_PORT: "5432"
+    DB_SSLMODE: disable
+    REDIS_ADDR: redis.go-ride-local.svc.cluster.local:6379
+    REDIS_PASSWORD: ""
+    JWT_ISSUER: go-ride-backend
+    JWT_AUDIENCE: go-ride-driver-app
+  secretRefs:
+    - go-ride-local-secrets

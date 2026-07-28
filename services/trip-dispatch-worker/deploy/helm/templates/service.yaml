@@ -1,0 +1,16 @@
+{{- if .Values.service.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "trip-dispatch-worker.fullname" . }}
+  labels:
+    {{- include "trip-dispatch-worker.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: {{ .Values.service.targetPort }}
+      protocol: TCP
+  selector:
+    {{- include "trip-dispatch-worker.selectorLabels" . | nindent 4 }}
+{{- end }}

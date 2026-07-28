@@ -1,0 +1,15 @@
+env:
+  plain:
+    SERVICE_NAME: trip-dispatch-worker
+    KAFKA_BROKERS: kafka.go-ride-local.svc.cluster.local:9092
+    KAFKA_CONSUMER_GROUP: trip-dispatch-worker-group
+    KAFKA_INPUT_TOPIC: ride.requested.v1
+    KAFKA_ASSIGNED_TOPIC: ride.assigned.v1
+    KAFKA_UNASSIGNED_TOPIC: ride.unassigned.v1
+    KAFKA_OFFER_CREATED_TOPIC: driver.job_offer.created.v1
+    DB_HOST: postgres.go-ride-local.svc.cluster.local
+    DB_NAME: go_ride
+    DB_PORT: "5432"
+    DB_SSLMODE: disable
+  secretRefs:
+    - go-ride-local-secrets

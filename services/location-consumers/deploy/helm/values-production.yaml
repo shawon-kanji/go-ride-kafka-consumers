@@ -1,0 +1,28 @@
+replicaCount: 2
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 256Mi
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+
+serviceAccount:
+  name: go-ride-app
+
+env:
+  plain:
+    SERVICE_NAME: location-consumers
+    LOG_LEVEL: info
+    KAFKA_TOPIC: driver.location.updated.v1
+    KAFKA_CONSUMER_GROUP: location-consumers-group
+    DB_NAME: go_ride
+    DB_PORT: "5432"
+    DB_SSLMODE: require
+    # KAFKA_BROKERS, DB_HOST set from Terraform outputs for this environment
+  secretRefs: []
+
+secretsManager:
+  enabled: true
+  dbCredentialsSecretName: go-ride/production/db-credentials

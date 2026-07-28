@@ -1,0 +1,6 @@
+apiVersion: v2
+name: trip-dispatch-worker
+description: Kafka consumer that matches riders with drivers (nearest-driver dispatch)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

@@ -1,0 +1,59 @@
+# replicaCount is pinned at 1 in every environment: the sweep loop
+# (internal/worker/sweep_runner.go) does an unlocked table scan, only the
+# per-request dispatch attempt itself is row-locked. Do not scale this
+# service horizontally until that path is confirmed safe under concurrency.
+image:
+  repository: go-ride/trip-dispatch-worker
+  tag: latest
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+service:
+  enabled: false
+  port: 8080
+  targetPort: 8080
+
+ingress:
+  enabled: false
+  path: /
+  host: ""
+  className: ""
+  group: ""
+  annotations: {}
+
+probes:
+  enabled: false
+  path: /healthz
+  port: 8080
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+serviceAccount:
+  create: false
+  name: ""
+  annotations: {}
+
+env:
+  plain:
+    SERVICE_NAME: trip-dispatch-worker
+    KAFKA_CONSUMER_GROUP: trip-dispatch-worker-group
+    KAFKA_INPUT_TOPIC: ride.requested.v1
+    KAFKA_ASSIGNED_TOPIC: ride.assigned.v1
+    KAFKA_UNASSIGNED_TOPIC: ride.unassigned.v1
+    KAFKA_OFFER_CREATED_TOPIC: driver.job_offer.created.v1
+    DB_NAME: go_ride
+    DB_PORT: "5432"
+    DB_SSLMODE: disable
+  secretRefs: []
+
+secretsManager:
+  enabled: false
+  dbCredentialsSecretName: ""
+  jwtSecretName: ""

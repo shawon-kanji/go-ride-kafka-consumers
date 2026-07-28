@@ -1,0 +1,6 @@
+apiVersion: v2
+name: driver-request-handler
+description: HTTP API for driver-initiated actions (job offer accept, trip lifecycle)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

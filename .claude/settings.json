@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep '\\\\.go$')",
+      "Bash(xargs -I{} sh -c 'echo ==={}===; cat {}')"
+    ]
+  }
+}

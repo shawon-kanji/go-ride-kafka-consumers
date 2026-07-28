@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "location-producers.fullname" . }}
+  labels:
+    {{- include "location-producers.labels" . | nindent 4 }}
+data:
+  {{- range $k, $v := .Values.env.plain }}
+  {{ $k }}: {{ $v | quote }}
+  {{- end }}
+  {{- if .Values.secretsManager.enabled }}
+  {{- if .Values.secretsManager.dbCredentialsSecretName }}
+  DB_CREDENTIALS_SECRET_NAME: {{ .Values.secretsManager.dbCredentialsSecretName | quote }}
+  {{- end }}
+  {{- if .Values.secretsManager.jwtSecretName }}
+  JWT_SECRET_NAME: {{ .Values.secretsManager.jwtSecretName | quote }}
+  {{- end }}
+  {{- end }}

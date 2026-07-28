@@ -19,8 +19,8 @@ type App struct {
 	runner   *worker.Runner
 }
 
-func New(mode string) (*App, error) {
-	cfg, err := config.Load(mode)
+func New(ctx context.Context, mode string) (*App, error) {
+	cfg, err := config.Load(ctx, mode)
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}

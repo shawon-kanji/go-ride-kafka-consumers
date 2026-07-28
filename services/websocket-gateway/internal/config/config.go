@@ -1,12 +1,14 @@
 package config
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/shawon-kanji/go-ride-utils/awssecrets"
 	"github.com/shawon-kanji/go-ride-utils/kafkatopics"
 )
 
@@ -67,10 +69,36 @@ type DBConfig struct {
 	SSLMode  string
 }
 
-func Load() (Config, error) {
+func Load(ctx context.Context) (Config, error) {
 	dbPort, err := getIntEnv("DB_PORT", 5432)
 	if err != nil {
 		return Config{}, fmt.Errorf("invalid DB_PORT: %w", err)
+	}
+
+	dbUser := getEnv("DB_USER", "postgres")
+	dbPassword := getEnv("DB_PASSWORD", "postgres")
+	if secretName := getEnv("DB_CREDENTIALS_SECRET_NAME", ""); secretName != "" {
+		values, err := awssecrets.FetchJSON(ctx, secretName)
+		if err != nil {
+			return Config{}, fmt.Errorf("fetch db credentials secret: %w", err)
+		}
+		if v, ok := values["DB_USER"]; ok {
+			dbUser = v
+		}
+		if v, ok := values["DB_PASSWORD"]; ok {
+			dbPassword = v
+		}
+	}
+
+	jwtSecret := getEnv("JWT_SECRET", "")
+	if secretName := getEnv("JWT_SECRET_NAME", ""); secretName != "" {
+		values, err := awssecrets.FetchJSON(ctx, secretName)
+		if err != nil {
+			return Config{}, fmt.Errorf("fetch jwt secret: %w", err)
+		}
+		if v, ok := values["JWT_SECRET"]; ok {
+			jwtSecret = v
+		}
 	}
 
 	redisDB, err := getIntEnv("REDIS_DB", 0)
@@ -109,8 +137,8 @@ func Load() (Config, error) {
 		DB: DBConfig{
 			Host:     getEnv("DB_HOST", "localhost"),
 			Port:     dbPort,
-			User:     getEnv("DB_USER", "postgres"),
-			Password: getEnv("DB_PASSWORD", "postgres"),
+			User:     dbUser,
+			Password: dbPassword,
 			Name:     getEnv("DB_NAME", "go_ride"),
 			SSLMode:  getEnv("DB_SSLMODE", "disable"),
 		},
@@ -136,7 +164,7 @@ func Load() (Config, error) {
 
 		ActiveTripTTL: time.Duration(activeTripTTLSeconds) * time.Second,
 
-		JWTSecret:   getEnv("JWT_SECRET", ""),
+		JWTSecret:   jwtSecret,
 		JWTIssuer:   getEnv("JWT_ISSUER", "go-ride-backend"),
 		JWTAudience: getEnv("JWT_AUDIENCE", "go-ride-driver-app"),
 

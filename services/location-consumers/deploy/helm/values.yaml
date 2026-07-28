@@ -1,0 +1,53 @@
+image:
+  repository: go-ride/location-consumers
+  tag: latest
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+service:
+  enabled: false
+  port: 8080
+  targetPort: 8080
+
+ingress:
+  enabled: false
+  path: /
+  host: ""
+  className: ""
+  group: ""
+  annotations: {}
+
+probes:
+  enabled: false
+  path: /healthz
+  port: 8080
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+serviceAccount:
+  create: false
+  name: ""
+  annotations: {}
+
+env:
+  plain:
+    SERVICE_NAME: location-consumers
+    LOG_LEVEL: info
+    KAFKA_TOPIC: driver.location.updated.v1
+    KAFKA_CONSUMER_GROUP: location-consumers-group
+    DB_NAME: go_ride
+    DB_PORT: "5432"
+    DB_SSLMODE: disable
+  secretRefs: []
+
+secretsManager:
+  enabled: false
+  dbCredentialsSecretName: ""
+  jwtSecretName: ""

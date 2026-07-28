@@ -1,0 +1,6 @@
+apiVersion: v2
+name: location-producers
+description: HTTP ingest API + Kafka producer for driver location updates
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

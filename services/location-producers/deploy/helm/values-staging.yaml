@@ -1,0 +1,21 @@
+replicaCount: 2
+
+ingress:
+  enabled: true
+  className: alb
+  group: go-ride-staging
+  path: /location
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+
+serviceAccount:
+  name: go-ride-app
+
+env:
+  plain:
+    SERVICE_NAME: location-producers
+    HTTP_ADDR: ":8081"
+    KAFKA_TOPIC: driver.location.updated.v1
+    # KAFKA_BROKERS set from the MSK bootstrap brokers output for this environment
+  secretRefs: []
