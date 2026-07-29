@@ -6,7 +6,7 @@ require (
 	github.com/golang/geo v0.0.0-20260713102120-857a528af641
 	github.com/google/uuid v1.6.0
 	github.com/segmentio/kafka-go v0.4.47
-	github.com/shawon-kanji/go-ride-utils v0.1.0
+	github.com/shawon-kanji/go-ride-utils v0.1.1
 )
 
 require (
