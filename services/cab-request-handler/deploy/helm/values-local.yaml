@@ -1,7 +1,7 @@
 ingress:
   enabled: true
   className: nginx
-  path: /cab
+  path: /api/v1/cab
 
 env:
   plain:

@@ -12,7 +12,7 @@ service:
 
 ingress:
   enabled: false
-  path: /ws
+  path: /api/v1/ws
   host: ""
   className: ""
   group: ""
@@ -20,7 +20,7 @@ ingress:
 
 probes:
   enabled: true
-  path: /healthz
+  path: /api/v1/ws/healthz
   port: 8083
 
 resources:

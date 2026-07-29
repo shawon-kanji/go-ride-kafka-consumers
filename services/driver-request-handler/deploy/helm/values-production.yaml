@@ -4,7 +4,7 @@ ingress:
   enabled: true
   className: alb
   group: go-ride-production
-  path: /driver
+  path: /api/v1/driver-trips
   annotations:
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip

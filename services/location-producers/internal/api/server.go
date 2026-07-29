@@ -46,9 +46,11 @@ func NewServer(cfg config.Config, producer kafka.Producer) *Server {
 		producer: producer,
 	}
 
+	const apiPrefix = "/api/v1/location"
+
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", server.handleHealthz)
-	mux.HandleFunc("/update-location", server.handleUpdateLocation)
+	mux.HandleFunc(apiPrefix+"/healthz", server.handleHealthz)
+	mux.HandleFunc(apiPrefix+"/update-location", server.handleUpdateLocation)
 
 	server.http = &http.Server{
 		Addr:              cfg.HTTPAddr,

@@ -3,7 +3,7 @@ replicaCount: 2
 ingress:
   enabled: true
   className: nginx
-  path: /ws
+  path: /api/v1/ws
 
 env:
   plain:

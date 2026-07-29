@@ -1,7 +1,7 @@
 ingress:
   enabled: true
   className: nginx
-  path: /location
+  path: /api/v1/location
 
 env:
   plain:

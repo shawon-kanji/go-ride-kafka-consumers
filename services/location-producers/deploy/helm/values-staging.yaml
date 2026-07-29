@@ -4,7 +4,7 @@ ingress:
   enabled: true
   className: alb
   group: go-ride-staging
-  path: /location
+  path: /api/v1/location
   annotations:
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip

@@ -46,19 +46,21 @@ func NewServer(hub *Hub, riderHub *RiderHub, verifier *auth.Verifier, pingInterv
 	}
 }
 
+const apiPrefix = "/api/v1/ws"
+
 func (s *Server) Routes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /healthz", s.handleHealthz)
-	mux.HandleFunc("GET /ws/driver", s.handleDriverWS)
-	mux.HandleFunc("GET /ws/rider", s.handleRiderWS)
+	mux.HandleFunc("GET "+apiPrefix+"/healthz", s.handleHealthz)
+	mux.HandleFunc("GET "+apiPrefix+"/driver", s.handleDriverWS)
+	mux.HandleFunc("GET "+apiPrefix+"/rider", s.handleRiderWS)
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// handleDriverWS upgrades GET /ws/driver?token=<jwt>&device_id=<id>. Token is
-// a query param (not a header) since the WS upgrade handshake can't reliably
-// carry custom headers from all client types.
+// handleDriverWS upgrades GET /api/v1/ws/driver?token=<jwt>&device_id=<id>.
+// Token is a query param (not a header) since the WS upgrade handshake can't
+// reliably carry custom headers from all client types.
 func (s *Server) handleDriverWS(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Query().Get("token")
 	deviceID := r.URL.Query().Get("device_id")
@@ -100,8 +102,8 @@ func (s *Server) handleDriverWS(w http.ResponseWriter, r *http.Request) {
 	}()
 }
 
-// handleRiderWS upgrades GET /ws/rider?token=<jwt>&device_id=<id>. Same
-// query-param token pattern as the driver route, but requires RiderRole.
+// handleRiderWS upgrades GET /api/v1/ws/rider?token=<jwt>&device_id=<id>.
+// Same query-param token pattern as the driver route, but requires RiderRole.
 func (s *Server) handleRiderWS(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Query().Get("token")
 	deviceID := r.URL.Query().Get("device_id")

@@ -12,7 +12,7 @@ service:
 
 ingress:
   enabled: false
-  path: /cab
+  path: /api/v1/cab
   host: ""
   className: ""
   group: ""
@@ -20,7 +20,7 @@ ingress:
 
 probes:
   enabled: true
-  path: /healthz
+  path: /api/v1/cab/healthz
   port: 8082
 
 resources:

@@ -1,7 +1,7 @@
 ingress:
   enabled: true
   className: nginx
-  path: /driver
+  path: /api/v1/driver-trips
 
 env:
   plain:

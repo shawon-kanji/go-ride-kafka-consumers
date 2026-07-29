@@ -24,9 +24,11 @@ import (
 const (
 	requestStatusSearchStarted = "search_started"
 	maxRequestBodyBytes        = 1 << 20
-	requestRoute               = "/request-cab"
-	currentTripRoute           = "/current-trip"
-	fareEstimateRoute          = "/fare-estimate"
+	apiPrefix                  = "/api/v1/cab"
+	healthzRoute               = apiPrefix + "/healthz"
+	requestRoute               = apiPrefix + "/request-cab"
+	currentTripRoute           = apiPrefix + "/current-trip"
+	fareEstimateRoute          = apiPrefix + "/fare-estimate"
 )
 
 var (
@@ -166,7 +168,7 @@ func NewServer(cfg config.Config, db *gorm.DB, producer kafka.Producer) *Server 
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", server.handleHealthz)
+	mux.HandleFunc(healthzRoute, server.handleHealthz)
 	mux.HandleFunc(requestRoute, server.handleCreateCabRequest)
 	mux.HandleFunc(currentTripRoute, server.handleCurrentTrip)
 	mux.HandleFunc(fareEstimateRoute, server.handleFareEstimate)

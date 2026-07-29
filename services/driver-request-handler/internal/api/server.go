@@ -91,12 +91,14 @@ func NewServer(cfg config.Config, verifier *auth.Verifier, offerService *offers.
 		producer: producer,
 	}
 
+	const apiPrefix = "/api/v1/driver-trips"
+
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", server.handleHealthz)
-	mux.HandleFunc("POST /job-offers/{job_offer_id}/accept", server.handleAcceptOffer)
-	mux.HandleFunc("POST /ongoing-trips/{ongoing_trip_id}/start", server.handleStartTrip)
-	mux.HandleFunc("POST /ongoing-trips/{ongoing_trip_id}/end", server.handleEndTrip)
-	mux.HandleFunc("POST /ongoing-trips/{ongoing_trip_id}/collect-payment", server.handleCollectPayment)
+	mux.HandleFunc("GET "+apiPrefix+"/healthz", server.handleHealthz)
+	mux.HandleFunc("POST "+apiPrefix+"/job-offers/{job_offer_id}/accept", server.handleAcceptOffer)
+	mux.HandleFunc("POST "+apiPrefix+"/ongoing-trips/{ongoing_trip_id}/start", server.handleStartTrip)
+	mux.HandleFunc("POST "+apiPrefix+"/ongoing-trips/{ongoing_trip_id}/end", server.handleEndTrip)
+	mux.HandleFunc("POST "+apiPrefix+"/ongoing-trips/{ongoing_trip_id}/collect-payment", server.handleCollectPayment)
 
 	server.http = &http.Server{
 		Addr:              cfg.HTTPAddr,
