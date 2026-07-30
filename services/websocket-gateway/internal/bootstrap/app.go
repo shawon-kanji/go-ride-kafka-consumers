@@ -15,6 +15,7 @@ import (
 	"go-ride-kafka-consumers/services/websocket-gateway/internal/offers"
 	"go-ride-kafka-consumers/services/websocket-gateway/internal/presence"
 	"go-ride-kafka-consumers/services/websocket-gateway/internal/tracking"
+	"go-ride-kafka-consumers/services/websocket-gateway/internal/tripcancel"
 	"go-ride-kafka-consumers/services/websocket-gateway/internal/tripcomplete"
 	"go-ride-kafka-consumers/services/websocket-gateway/internal/tripend"
 	"go-ride-kafka-consumers/services/websocket-gateway/internal/tripstart"
@@ -32,6 +33,7 @@ type App struct {
 	tripStartedBus        *presence.Bus
 	tripEndedBus          *presence.Bus
 	tripCompletedBus      *presence.Bus
+	tripCancelledBus      *presence.Bus
 	locationStore         *presence.Store
 	consumer              kafka.Consumer
 	assignmentConsumer    kafka.Consumer
@@ -39,6 +41,7 @@ type App struct {
 	rideStartedConsumer   kafka.Consumer
 	rideEndedConsumer     kafka.Consumer
 	rideCompletedConsumer kafka.Consumer
+	rideCancelledConsumer kafka.Consumer
 	server                *http.Server
 }
 
@@ -96,6 +99,11 @@ func New(ctx context.Context) (*App, error) {
 	tripCompletedBus := presence.NewBus(cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB, cfg.RedisTripCompletedChannel)
 	tripCompletedNotifier := tripcomplete.NewNotifier(tripCompletedBus)
 	rideCompletedConsumer := kafka.NewRideCompletedConsumer(cfg, tripCompletedNotifier)
+
+	tripCancelledDeliverer := tripcancel.NewDeliverer(riderHub, hub)
+	tripCancelledBus := presence.NewBus(cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB, cfg.RedisTripCancelledChannel)
+	tripCancelledNotifier := tripcancel.NewNotifier(locationStore, tripCancelledBus)
+	rideCancelledConsumer := kafka.NewRideCancelledConsumer(cfg, tripCancelledNotifier)
 
 	verifier := auth.NewVerifier(cfg.JWTSecret, cfg.JWTIssuer, cfg.JWTAudience)
 
@@ -178,6 +186,15 @@ func New(ctx context.Context) (*App, error) {
 		}
 	}()
 
+	go func() {
+		bgCtx := context.Background()
+		if err := tripCancelledBus.Subscribe(bgCtx, func(payload []byte) {
+			tripCancelledDeliverer.HandleBroadcast(bgCtx, payload)
+		}); err != nil {
+			log.Printf("websocket_gateway: trip cancelled presence subscribe stopped: %v", err)
+		}
+	}()
+
 	return &App{
 		cfg:                   cfg,
 		sqlDB:                 sqlDB,
@@ -187,6 +204,7 @@ func New(ctx context.Context) (*App, error) {
 		tripStartedBus:        tripStartedBus,
 		tripEndedBus:          tripEndedBus,
 		tripCompletedBus:      tripCompletedBus,
+		tripCancelledBus:      tripCancelledBus,
 		locationStore:         locationStore,
 		consumer:              consumer,
 		assignmentConsumer:    assignmentConsumer,
@@ -194,6 +212,7 @@ func New(ctx context.Context) (*App, error) {
 		rideStartedConsumer:   rideStartedConsumer,
 		rideEndedConsumer:     rideEndedConsumer,
 		rideCompletedConsumer: rideCompletedConsumer,
+		rideCancelledConsumer: rideCancelledConsumer,
 		server:                httpServer,
 	}, nil
 }
@@ -223,6 +242,9 @@ func (a *App) Run(ctx context.Context) error {
 		if err := a.tripCompletedBus.Close(); err != nil {
 			log.Printf("close trip completed redis bus: %v", err)
 		}
+		if err := a.tripCancelledBus.Close(); err != nil {
+			log.Printf("close trip cancelled redis bus: %v", err)
+		}
 		if err := a.locationStore.Close(); err != nil {
 			log.Printf("close location redis store: %v", err)
 		}
@@ -232,7 +254,7 @@ func (a *App) Run(ctx context.Context) error {
 		return fmt.Errorf("ping sql db: %w", err)
 	}
 
-	errCh := make(chan error, 7)
+	errCh := make(chan error, 8)
 
 	go func() {
 		if err := a.consumer.Start(ctx); err != nil {
@@ -283,6 +305,14 @@ func (a *App) Run(ctx context.Context) error {
 	}()
 
 	go func() {
+		if err := a.rideCancelledConsumer.Start(ctx); err != nil {
+			errCh <- fmt.Errorf("ride cancelled kafka consumer: %w", err)
+			return
+		}
+		errCh <- nil
+	}()
+
+	go func() {
 		if err := a.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			errCh <- fmt.Errorf("http server: %w", err)
 			return
@@ -296,7 +326,7 @@ func (a *App) Run(ctx context.Context) error {
 	}()
 
 	var firstErr error
-	for i := 0; i < 7; i++ {
+	for i := 0; i < 8; i++ {
 		if err := <-errCh; err != nil && firstErr == nil {
 			firstErr = err
 		}

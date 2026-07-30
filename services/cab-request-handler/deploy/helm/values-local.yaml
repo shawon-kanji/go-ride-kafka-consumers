@@ -9,6 +9,7 @@ env:
     HTTP_ADDR: ":8082"
     KAFKA_BROKERS: kafka.go-ride-local.svc.cluster.local:9092
     KAFKA_TOPIC: ride.requested.v1
+    KAFKA_CANCELLED_TOPIC: ride.cancelled.v1
     DB_HOST: postgres.go-ride-local.svc.cluster.local
     DB_NAME: go_ride
     DB_PORT: "5432"

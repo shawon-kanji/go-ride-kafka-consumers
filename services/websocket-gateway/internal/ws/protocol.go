@@ -302,3 +302,67 @@ func NewTripCompletedMessage(p TripCompletedParams) TripCompletedMessage {
 		SentAt:             time.Now().UTC(),
 	}
 }
+
+// TripCancelledMessage is pushed to both the rider and (if one was assigned)
+// the driver when a rider cancels, at whichever stage it happened. Distinct
+// from OfferWithdrawnMessage since the two have different audiences and
+// different client-side handling (tearing down an active-trip screen vs.
+// clearing a pending-offer card).
+type TripCancelledMessage struct {
+	Type          string    `json:"type"`
+	RequestID     string    `json:"request_id"`
+	TripID        string    `json:"trip_id"`
+	OngoingTripID string    `json:"ongoing_trip_id,omitempty"`
+	DriverID      string    `json:"driver_id,omitempty"`
+	Stage         string    `json:"stage"`
+	CancelledBy   string    `json:"cancelled_by"`
+	CancelledAt   time.Time `json:"cancelled_at"`
+	SentAt        time.Time `json:"sent_at"`
+}
+
+type TripCancelledParams struct {
+	RequestID     string
+	TripID        string
+	OngoingTripID string
+	DriverID      string
+	Stage         string
+	CancelledBy   string
+	CancelledAt   time.Time
+}
+
+func NewTripCancelledMessage(p TripCancelledParams) TripCancelledMessage {
+	return TripCancelledMessage{
+		Type:          "trip_cancelled",
+		RequestID:     p.RequestID,
+		TripID:        p.TripID,
+		OngoingTripID: p.OngoingTripID,
+		DriverID:      p.DriverID,
+		Stage:         p.Stage,
+		CancelledBy:   p.CancelledBy,
+		CancelledAt:   p.CancelledAt,
+		SentAt:        time.Now().UTC(),
+	}
+}
+
+// OfferWithdrawnMessage is pushed to a driver whose still-pending job offer
+// was withdrawn because the rider cancelled before anyone accepted.
+type OfferWithdrawnMessage struct {
+	Type      string    `json:"type"`
+	RequestID string    `json:"request_id"`
+	TripID    string    `json:"trip_id"`
+	SentAt    time.Time `json:"sent_at"`
+}
+
+type OfferWithdrawnParams struct {
+	RequestID string
+	TripID    string
+}
+
+func NewOfferWithdrawnMessage(p OfferWithdrawnParams) OfferWithdrawnMessage {
+	return OfferWithdrawnMessage{
+		Type:      "offer_withdrawn",
+		RequestID: p.RequestID,
+		TripID:    p.TripID,
+		SentAt:    time.Now().UTC(),
+	}
+}

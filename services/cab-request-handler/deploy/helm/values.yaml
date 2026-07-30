@@ -41,6 +41,7 @@ env:
     SERVICE_NAME: cab-request-handler
     HTTP_ADDR: ":8082"
     KAFKA_TOPIC: ride.requested.v1
+    KAFKA_CANCELLED_TOPIC: ride.cancelled.v1
     DB_NAME: go_ride
     DB_PORT: "5432"
     DB_SSLMODE: disable

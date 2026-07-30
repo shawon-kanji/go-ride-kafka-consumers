@@ -24,6 +24,7 @@ type Config struct {
 	RideStartedTopic   string
 	RideEndedTopic     string
 	RideCompletedTopic string
+	RideCancelledTopic string
 	// DriverLocationTopic must match location-producers' KAFKA_TOPIC / the
 	// root Makefile's LOCATION_TOPIC — they must stay in sync manually,
 	// same caveat as DriverCommissionRate below.
@@ -38,6 +39,7 @@ type Config struct {
 	RedisTripStartedChannel   string
 	RedisTripEndedChannel     string
 	RedisTripCompletedChannel string
+	RedisTripCancelledChannel string
 
 	// ActiveTripTTL bounds how long a driver->rider active-trip mapping
 	// (used to filter the location firehose) survives in Redis. There's no
@@ -150,6 +152,7 @@ func Load(ctx context.Context) (Config, error) {
 		RideStartedTopic:    getEnv("KAFKA_STARTED_TOPIC", kafkatopics.RideStartedV1),
 		RideEndedTopic:      getEnv("KAFKA_ENDED_TOPIC", kafkatopics.RideEndedV1),
 		RideCompletedTopic:  getEnv("KAFKA_COMPLETED_TOPIC", kafkatopics.RideCompletedV1),
+		RideCancelledTopic:  getEnv("KAFKA_CANCELLED_TOPIC", kafkatopics.RideCancelledV1),
 		DriverLocationTopic: getEnv("KAFKA_LOCATION_TOPIC", kafkatopics.DriverLocationUpdatedV1),
 
 		RedisAddr:                 getEnv("REDIS_ADDR", "localhost:6379"),
@@ -161,6 +164,7 @@ func Load(ctx context.Context) (Config, error) {
 		RedisTripStartedChannel:   getEnv("REDIS_TRIP_STARTED_CHANNEL", "trip-started"),
 		RedisTripEndedChannel:     getEnv("REDIS_TRIP_ENDED_CHANNEL", "trip-ended"),
 		RedisTripCompletedChannel: getEnv("REDIS_TRIP_COMPLETED_CHANNEL", "trip-completed"),
+		RedisTripCancelledChannel: getEnv("REDIS_TRIP_CANCELLED_CHANNEL", "trip-cancelled"),
 
 		ActiveTripTTL: time.Duration(activeTripTTLSeconds) * time.Second,
 
@@ -192,6 +196,9 @@ func Load(ctx context.Context) (Config, error) {
 	}
 	if cfg.RideCompletedTopic == "" {
 		return Config{}, fmt.Errorf("KAFKA_COMPLETED_TOPIC is required")
+	}
+	if cfg.RideCancelledTopic == "" {
+		return Config{}, fmt.Errorf("KAFKA_CANCELLED_TOPIC is required")
 	}
 	if cfg.DriverLocationTopic == "" {
 		return Config{}, fmt.Errorf("KAFKA_LOCATION_TOPIC is required")

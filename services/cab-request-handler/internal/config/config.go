@@ -18,6 +18,7 @@ type Config struct {
 	DB                    DBConfig
 	KafkaBrokers          []string
 	KafkaTopic            string
+	CancelledTopic        string
 	DefaultSearchRadiusKM float64
 	FareCurrencyCode      string
 	FarePricingVersion    string
@@ -107,6 +108,7 @@ func Load(ctx context.Context) (Config, error) {
 		},
 		KafkaBrokers:          splitAndTrim(getEnv("KAFKA_BROKERS", "localhost:9094")),
 		KafkaTopic:            getEnv("KAFKA_TOPIC", kafkatopics.RideRequestedV1),
+		CancelledTopic:        getEnv("KAFKA_CANCELLED_TOPIC", kafkatopics.RideCancelledV1),
 		DefaultSearchRadiusKM: defaultSearchRadiusKM,
 		FareCurrencyCode:      getEnv("FARE_CURRENCY_CODE", "USD"),
 		FarePricingVersion:    getEnv("FARE_PRICING_VERSION", "v1"),
@@ -123,6 +125,9 @@ func Load(ctx context.Context) (Config, error) {
 	}
 	if cfg.KafkaTopic == "" {
 		return Config{}, fmt.Errorf("KAFKA_TOPIC is required")
+	}
+	if cfg.CancelledTopic == "" {
+		return Config{}, fmt.Errorf("KAFKA_CANCELLED_TOPIC is required")
 	}
 	if cfg.HTTPAddr == "" {
 		return Config{}, fmt.Errorf("HTTP_ADDR is required")

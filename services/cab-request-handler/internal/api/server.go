@@ -27,6 +27,7 @@ const (
 	apiPrefix                  = "/api/v1/cab"
 	healthzRoute               = apiPrefix + "/healthz"
 	requestRoute               = apiPrefix + "/request-cab"
+	cancelRoute                = apiPrefix + "/request-cab/{request_id}/cancel"
 	currentTripRoute           = apiPrefix + "/current-trip"
 	fareEstimateRoute          = apiPrefix + "/fare-estimate"
 )
@@ -170,6 +171,7 @@ func NewServer(cfg config.Config, db *gorm.DB, producer kafka.Producer) *Server 
 	mux := http.NewServeMux()
 	mux.HandleFunc(healthzRoute, server.handleHealthz)
 	mux.HandleFunc(requestRoute, server.handleCreateCabRequest)
+	mux.HandleFunc(cancelRoute, server.handleCancelTripRequest)
 	mux.HandleFunc(currentTripRoute, server.handleCurrentTrip)
 	mux.HandleFunc(fareEstimateRoute, server.handleFareEstimate)
 
