@@ -23,6 +23,12 @@ import (
 // message rather than retrying indefinitely.
 var ErrRequestNotFound = errors.New("trip request not found")
 
+// driverCancelledEventType matches the trip_history.event_type value written
+// by driver-request-handler's CancelTrip when a driver cancels a trip they'd
+// accepted. Used to permanently exclude that driver from being rematched to
+// the same request during redispatch.
+const driverCancelledEventType = "driver_cancelled"
+
 const nearestDriversQueryTemplate = `
 WITH candidate_distances AS (
     SELECT
@@ -47,6 +53,12 @@ WHERE cd.distance_km <= ?
       SELECT 1 FROM ongoing_trips ot
       WHERE ot.driver_id = cd.driver_id
         AND ot.status IN (?)
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM trip_history th
+      WHERE th.request_id = ?
+        AND th.driver_id = cd.driver_id
+        AND th.event_type = ?
   )
 ORDER BY cd.distance_km ASC
 LIMIT ?
@@ -143,10 +155,10 @@ func (s *Service) AttemptDispatch(ctx context.Context, requestID uuid.UUID) erro
 		coveringMins, coveringMaxs := s2CoveringRanges(req.PickupLat, req.PickupLng, radius)
 		query, coveringArgs := buildNearestDriversQuery(coveringMins, coveringMaxs)
 
-		args := make([]any, 0, 8+len(coveringArgs))
+		args := make([]any, 0, 10+len(coveringArgs))
 		args = append(args, req.PickupLat, req.PickupLng, req.PickupLat, freshSince)
 		args = append(args, coveringArgs...)
-		args = append(args, radius, schemamodels.ActiveOngoingTripStatuses(), s.cfg.NearestDriversLimit)
+		args = append(args, radius, schemamodels.ActiveOngoingTripStatuses(), req.ID, driverCancelledEventType, s.cfg.NearestDriversLimit)
 
 		var candidates []driverCandidate
 		if err := tx.Raw(query, args...).Scan(&candidates).Error; err != nil {
