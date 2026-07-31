@@ -8,6 +8,7 @@ RIDE_STARTED_TOPIC ?= ride.started.v1
 RIDE_ENDED_TOPIC ?= ride.ended.v1
 RIDE_COMPLETED_TOPIC ?= ride.completed.v1
 RIDE_UNASSIGNED_TOPIC ?= ride.unassigned.v1
+RIDE_CANCELLED_TOPIC ?= ride.cancelled.v1
 DRIVER_JOB_OFFER_CREATED_TOPIC ?= driver.job_offer.created.v1
 
 .PHONY: up down restart logs ps topic-create topic-list topic-delete topic-create-all migrate-up migrate-down migrate-version \
@@ -45,6 +46,7 @@ topic-create-all:
 	$(COMPOSE) exec -T kafka kafka-topics.sh --create --if-not-exists --topic $(RIDE_ENDED_TOPIC) --bootstrap-server localhost:9092 --partitions 3 --replication-factor 1
 	$(COMPOSE) exec -T kafka kafka-topics.sh --create --if-not-exists --topic $(RIDE_COMPLETED_TOPIC) --bootstrap-server localhost:9092 --partitions 3 --replication-factor 1
 	$(COMPOSE) exec -T kafka kafka-topics.sh --create --if-not-exists --topic $(RIDE_UNASSIGNED_TOPIC) --bootstrap-server localhost:9092 --partitions 3 --replication-factor 1
+	$(COMPOSE) exec -T kafka kafka-topics.sh --create --if-not-exists --topic $(RIDE_CANCELLED_TOPIC) --bootstrap-server localhost:9092 --partitions 3 --replication-factor 1
 	$(COMPOSE) exec -T kafka kafka-topics.sh --create --if-not-exists --topic $(DRIVER_JOB_OFFER_CREATED_TOPIC) --bootstrap-server localhost:9092 --partitions 3 --replication-factor 1
 
 migrate-up:

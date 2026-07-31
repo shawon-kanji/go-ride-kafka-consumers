@@ -48,6 +48,7 @@ env:
     KAFKA_ASSIGNED_TOPIC: ride.assigned.v1
     KAFKA_UNASSIGNED_TOPIC: ride.unassigned.v1
     KAFKA_OFFER_CREATED_TOPIC: driver.job_offer.created.v1
+    KAFKA_CANCELLED_TOPIC: ride.cancelled.v1
     DB_NAME: go_ride
     DB_PORT: "5432"
     DB_SSLMODE: disable

@@ -22,6 +22,7 @@ type Config struct {
 	AssignedTopic     string
 	UnassignTopic     string
 	OfferCreatedTopic string
+	CancelledTopic    string
 
 	NearestDriversLimit       int
 	DriverLocationFreshWindow time.Duration
@@ -138,6 +139,7 @@ func Load(ctx context.Context, mode string) (Config, error) {
 		AssignedTopic:     getEnv("KAFKA_ASSIGNED_TOPIC", kafkatopics.RideAssignedV1),
 		UnassignTopic:     getEnv("KAFKA_UNASSIGNED_TOPIC", kafkatopics.RideUnassignedV1),
 		OfferCreatedTopic: getEnv("KAFKA_OFFER_CREATED_TOPIC", kafkatopics.DriverJobOfferCreatedV1),
+		CancelledTopic:    getEnv("KAFKA_CANCELLED_TOPIC", kafkatopics.RideCancelledV1),
 
 		NearestDriversLimit:       nearestDriversLimit,
 		DriverLocationFreshWindow: time.Duration(driverLocationFreshWindowSeconds) * time.Second,
@@ -166,6 +168,9 @@ func Load(ctx context.Context, mode string) (Config, error) {
 	}
 	if cfg.OfferCreatedTopic == "" {
 		return Config{}, fmt.Errorf("KAFKA_OFFER_CREATED_TOPIC is required")
+	}
+	if cfg.CancelledTopic == "" {
+		return Config{}, fmt.Errorf("KAFKA_CANCELLED_TOPIC is required")
 	}
 	if cfg.NearestDriversLimit <= 0 {
 		return Config{}, fmt.Errorf("NEAREST_DRIVERS_LIMIT must be greater than zero")

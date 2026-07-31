@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"time"
 
-	"go-ride-kafka-consumers/services/driver-request-handler/internal/kafka"
 	"github.com/shawon-kanji/go-ride-utils/events"
+	"go-ride-kafka-consumers/services/driver-request-handler/internal/kafka"
 
 	"github.com/google/uuid"
 	schemamodels "github.com/shawon-kanji/go-ride-db-schema/models"
@@ -21,11 +21,13 @@ var (
 	ErrOfferForbidden   = errors.New("offer_forbidden")
 	ErrOfferNotWinnable = errors.New("offer_not_winnable")
 
-	ErrTripNotFound       = errors.New("trip_not_found")
-	ErrTripForbidden      = errors.New("trip_forbidden")
-	ErrTripNotStartable   = errors.New("trip_not_startable")
-	ErrTripNotEndable     = errors.New("trip_not_endable")
-	ErrTripNotCollectable = errors.New("trip_not_collectable")
+	ErrTripNotFound         = errors.New("trip_not_found")
+	ErrTripForbidden        = errors.New("trip_forbidden")
+	ErrTripNotStartable     = errors.New("trip_not_startable")
+	ErrTripNotEndable       = errors.New("trip_not_endable")
+	ErrTripNotCollectable   = errors.New("trip_not_collectable")
+	ErrTripAlreadyCancelled = errors.New("trip_already_cancelled")
+	ErrTripNotCancellable   = errors.New("trip_not_cancellable")
 )
 
 type AcceptResult struct {
@@ -47,6 +49,14 @@ type EndTripResult struct {
 type CollectPaymentResult struct {
 	OngoingTrip  schemamodels.OngoingTrip
 	CurrencyCode string
+}
+
+type CancelTripResult struct {
+	OngoingTrip schemamodels.OngoingTrip
+	TripRequest schemamodels.TripRequest
+	Stage       string
+	PriorStatus string
+	Redispatch  bool
 }
 
 type Service struct {
@@ -581,6 +591,180 @@ func (s *Service) CollectPayment(ctx context.Context, ongoingTripID, driverID uu
 
 	if err := s.producer.PublishRideCompleted(ctx, event); err != nil {
 		return CollectPaymentResult{}, fmt.Errorf("publish ride completed request_id=%s: %w", event.RequestID, err)
+	}
+
+	return result, nil
+}
+
+// CancelTrip cancels a trip the driver has already accepted, from acceptance
+// (assigned/driver_arriving) through an in-progress trip. Unlike the rider
+// cancellation flow, there is no search-stage branch here: a driver only ever
+// attaches to a trip via AcceptOffer, so ongoing_trips is always the
+// authoritative table.
+//
+// Locking order deliberately matches rider-cancellation's cancelAfterAssignment
+// (trip_requests locked first, then ongoing_trips) so this can never deadlock
+// against a concurrent rider cancel on the same trip. The URL/caller only has
+// ongoing_trip_id though, so request_id is discovered with a plain (unlocked)
+// read first, purely to know what to lock in order; the real validation
+// happens on the locked re-read of ongoing_trips below.
+//
+// When the trip is in_progress (mid-trip cancellation), this also records the
+// straight-line distance between the driver's last-known location and the
+// dropoff point on the trip_history row — a safety audit fact, not acted on
+// here (no SOS/alerting; that's future work).
+func (s *Service) CancelTrip(ctx context.Context, ongoingTripID, driverID uuid.UUID, reason string) (CancelTripResult, error) {
+	now := time.Now().UTC()
+	var result CancelTripResult
+
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var pre schemamodels.OngoingTrip
+		if err := tx.Select("request_id").Where("id = ?", ongoingTripID).Take(&pre).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrTripNotFound
+			}
+			return fmt.Errorf("lookup ongoing trip id=%s: %w", ongoingTripID, err)
+		}
+
+		var request schemamodels.TripRequest
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("request_id = ?", pre.RequestID).
+			Take(&request).Error; err != nil {
+			return fmt.Errorf("lock trip request request_id=%s: %w", pre.RequestID, err)
+		}
+
+		var trip schemamodels.OngoingTrip
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ?", ongoingTripID).
+			Take(&trip).Error; err != nil {
+			return fmt.Errorf("lock ongoing trip id=%s: %w", ongoingTripID, err)
+		}
+
+		if trip.DriverID != driverID {
+			return ErrTripForbidden
+		}
+
+		var stage string
+		switch trip.Status {
+		case schemamodels.OngoingTripStatusAssigned, schemamodels.OngoingTripStatusDriverArriving:
+			stage = "assigned"
+		case schemamodels.OngoingTripStatusInProgress:
+			stage = "in_progress"
+		case schemamodels.OngoingTripStatusCancelled:
+			return ErrTripAlreadyCancelled
+		default:
+			return ErrTripNotCancellable
+		}
+
+		fromStatus := trip.Status
+		cancelledBy := schemamodels.CancelledByDriver
+		var reasonPtr *string
+		if reason != "" {
+			reasonPtr = &reason
+		}
+
+		if err := tx.Model(&schemamodels.OngoingTrip{}).
+			Where("id = ?", trip.ID).
+			Updates(map[string]any{
+				"status":              schemamodels.OngoingTripStatusCancelled,
+				"cancelled_at":        now,
+				"cancellation_reason": reasonPtr,
+				"cancelled_by":        cancelledBy,
+				"updated_at":          now,
+			}).Error; err != nil {
+			return fmt.Errorf("cancel ongoing trip id=%s: %w", trip.ID, err)
+		}
+		trip.Status = schemamodels.OngoingTripStatusCancelled
+		trip.CancelledAt = &now
+		trip.CancellationReason = reasonPtr
+		trip.CancelledBy = &cancelledBy
+
+		if err := tx.Model(&schemamodels.TripRequest{}).
+			Where("request_id = ?", request.ID).
+			Updates(map[string]any{
+				"status":              schemamodels.TripRequestStatusCancelled,
+				"cancelled_at":        now,
+				"cancellation_reason": reasonPtr,
+				"cancelled_by":        cancelledBy,
+				"updated_at":          now,
+			}).Error; err != nil {
+			return fmt.Errorf("cancel trip request request_id=%s: %w", request.ID, err)
+		}
+		request.Status = schemamodels.TripRequestStatusCancelled
+		request.CancelledAt = &now
+		request.CancellationReason = reasonPtr
+		request.CancelledBy = &cancelledBy
+
+		payload := map[string]any{"ongoing_trip_id": trip.ID}
+		if stage == "in_progress" {
+			var location schemamodels.DriverLocation
+			if err := tx.Where("driver_id = ?", driverID).Take(&location).Error; err == nil {
+				distanceKM := haversineKM(location.Latitude, location.Longitude, trip.DropoffLat, trip.DropoffLng)
+				payload["dropoff_distance_km"] = distanceKM
+				payload["driver_lat"] = location.Latitude
+				payload["driver_lng"] = location.Longitude
+			} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("load driver location driver_id=%s: %w", driverID, err)
+			}
+		}
+
+		eventPayload, err := json.Marshal(payload)
+		if err != nil {
+			return fmt.Errorf("marshal trip history payload: %w", err)
+		}
+		toStatus := schemamodels.TripRequestStatusCancelled
+		history := schemamodels.TripHistory{
+			ID:            uuid.New(),
+			RequestID:     request.ID,
+			TripID:        request.TripID,
+			RiderID:       &request.RiderID,
+			DriverID:      &driverID,
+			EventType:     "driver_cancelled",
+			FromStatus:    &fromStatus,
+			ToStatus:      &toStatus,
+			EventPayload:  eventPayload,
+			CorrelationID: request.CorrelationID,
+			CreatedAt:     now,
+		}
+		if err := tx.Create(&history).Error; err != nil {
+			return fmt.Errorf("create trip history: %w", err)
+		}
+
+		result = CancelTripResult{
+			OngoingTrip: trip,
+			TripRequest: request,
+			Stage:       stage,
+			PriorStatus: fromStatus,
+			Redispatch:  stage == "assigned",
+		}
+		return nil
+	})
+	if err != nil {
+		return CancelTripResult{}, err
+	}
+
+	event := events.RideCancelledV1{
+		RequestID:     result.TripRequest.ID.String(),
+		TripID:        result.TripRequest.TripID.String(),
+		RiderID:       result.TripRequest.RiderID.String(),
+		Stage:         result.Stage,
+		PriorStatus:   result.PriorStatus,
+		DriverID:      driverID.String(),
+		OngoingTripID: result.OngoingTrip.ID.String(),
+		CancelledBy:   schemamodels.CancelledByDriver,
+		CancelledAt:   now,
+		EventID:       result.OngoingTrip.ID.String() + ":cancelled",
+		PublishedAt:   time.Now().UTC(),
+	}
+	if result.TripRequest.CancellationReason != nil {
+		event.CancellationReason = *result.TripRequest.CancellationReason
+	}
+	if result.TripRequest.CorrelationID != nil {
+		event.CorrelationID = *result.TripRequest.CorrelationID
+	}
+
+	if err := s.producer.PublishRideCancelled(ctx, event); err != nil {
+		return CancelTripResult{}, fmt.Errorf("publish ride cancelled request_id=%s: %w", event.RequestID, err)
 	}
 
 	return result, nil

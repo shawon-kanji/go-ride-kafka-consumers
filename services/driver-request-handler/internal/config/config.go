@@ -20,6 +20,7 @@ type Config struct {
 	StartedTopic   string
 	EndedTopic     string
 	CompletedTopic string
+	CancelledTopic string
 	JWTSecret      string
 	JWTIssuer      string
 	JWTAudience    string
@@ -82,6 +83,7 @@ func Load(ctx context.Context) (Config, error) {
 		StartedTopic:   getEnv("KAFKA_STARTED_TOPIC", kafkatopics.RideStartedV1),
 		EndedTopic:     getEnv("KAFKA_ENDED_TOPIC", kafkatopics.RideEndedV1),
 		CompletedTopic: getEnv("KAFKA_COMPLETED_TOPIC", kafkatopics.RideCompletedV1),
+		CancelledTopic: getEnv("KAFKA_CANCELLED_TOPIC", kafkatopics.RideCancelledV1),
 		JWTSecret:      jwtSecret,
 		JWTIssuer:      getEnv("JWT_ISSUER", "go-ride-backend"),
 		JWTAudience:    getEnv("JWT_AUDIENCE", "go-ride-drivers"),
@@ -101,6 +103,9 @@ func Load(ctx context.Context) (Config, error) {
 	}
 	if cfg.CompletedTopic == "" {
 		return Config{}, fmt.Errorf("KAFKA_COMPLETED_TOPIC is required")
+	}
+	if cfg.CancelledTopic == "" {
+		return Config{}, fmt.Errorf("KAFKA_CANCELLED_TOPIC is required")
 	}
 	if cfg.HTTPAddr == "" {
 		return Config{}, fmt.Errorf("HTTP_ADDR is required")

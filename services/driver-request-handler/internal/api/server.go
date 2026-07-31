@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -75,6 +76,19 @@ type collectPaymentResponse struct {
 	CurrencyCode string             `json:"currency_code,omitempty"`
 }
 
+type cancelTripBody struct {
+	Reason string `json:"reason,omitempty"`
+}
+
+type cancelTripResponse struct {
+	Accepted            bool               `json:"accepted"`
+	OngoingTrip         ongoingTripPayload `json:"ongoing_trip"`
+	RequestID           string             `json:"request_id"`
+	Stage               string             `json:"stage"`
+	RedispatchTriggered bool               `json:"redispatch_triggered"`
+	CancelledAt         time.Time          `json:"cancelled_at"`
+}
+
 type Server struct {
 	cfg      config.Config
 	verifier *auth.Verifier
@@ -99,6 +113,7 @@ func NewServer(cfg config.Config, verifier *auth.Verifier, offerService *offers.
 	mux.HandleFunc("POST "+apiPrefix+"/ongoing-trips/{ongoing_trip_id}/start", server.handleStartTrip)
 	mux.HandleFunc("POST "+apiPrefix+"/ongoing-trips/{ongoing_trip_id}/end", server.handleEndTrip)
 	mux.HandleFunc("POST "+apiPrefix+"/ongoing-trips/{ongoing_trip_id}/collect-payment", server.handleCollectPayment)
+	mux.HandleFunc("POST "+apiPrefix+"/ongoing-trips/{ongoing_trip_id}/cancel", server.handleCancelTrip)
 
 	server.http = &http.Server{
 		Addr:              cfg.HTTPAddr,
@@ -357,6 +372,69 @@ func (s *Server) handleCollectPayment(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(response)
 	log.Printf("driver collected payment ongoing_trip_id=%s trip_id=%s driver_id=%s", response.OngoingTrip.TripRecordID, response.OngoingTrip.TripID, driverID)
+}
+
+func (s *Server) handleCancelTrip(w http.ResponseWriter, r *http.Request) {
+	token := bearerToken(r)
+	if token == "" {
+		writeJSONError(w, http.StatusUnauthorized, "unauthorized", "missing bearer token")
+		return
+	}
+
+	claims, err := s.verifier.Parse(token)
+	if err != nil || claims.Role != auth.DriverRole {
+		writeJSONError(w, http.StatusUnauthorized, "unauthorized", "invalid or non-driver token")
+		return
+	}
+
+	driverID, err := uuid.Parse(claims.UserID)
+	if err != nil {
+		writeJSONError(w, http.StatusUnauthorized, "unauthorized", "invalid driver id in token")
+		return
+	}
+
+	ongoingTripID, err := uuid.Parse(r.PathValue("ongoing_trip_id"))
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid_ongoing_trip_id", "ongoing_trip_id must be a valid UUID")
+		return
+	}
+
+	var body cancelTripBody
+	if decodeErr := json.NewDecoder(r.Body).Decode(&body); decodeErr != nil && !errors.Is(decodeErr, io.EOF) {
+		writeJSONError(w, http.StatusBadRequest, "invalid_request_body", "request body must be valid JSON")
+		return
+	}
+
+	result, err := s.offers.CancelTrip(r.Context(), ongoingTripID, driverID, body.Reason)
+	if err != nil {
+		switch {
+		case errors.Is(err, offers.ErrTripNotFound):
+			writeJSONError(w, http.StatusNotFound, "trip_not_found", "ongoing trip was not found")
+		case errors.Is(err, offers.ErrTripForbidden):
+			writeJSONError(w, http.StatusForbidden, "trip_forbidden", "ongoing trip does not belong to this driver")
+		case errors.Is(err, offers.ErrTripAlreadyCancelled):
+			writeJSONError(w, http.StatusConflict, "trip_already_cancelled", "this trip has already been cancelled")
+		case errors.Is(err, offers.ErrTripNotCancellable):
+			writeJSONError(w, http.StatusConflict, "trip_not_cancellable", "this trip is no longer cancellable")
+		default:
+			log.Printf("cancel trip ongoing_trip_id=%s driver_id=%s: %v", ongoingTripID, driverID, err)
+			writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to cancel trip")
+		}
+		return
+	}
+
+	response := cancelTripResponse{
+		Accepted:            true,
+		OngoingTrip:         ongoingTripPayloadFrom(result.OngoingTrip),
+		RequestID:           result.TripRequest.ID.String(),
+		Stage:               result.Stage,
+		RedispatchTriggered: result.Redispatch,
+		CancelledAt:         *result.OngoingTrip.CancelledAt,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(response)
+	log.Printf("driver cancelled trip ongoing_trip_id=%s trip_id=%s driver_id=%s stage=%s redispatch=%t", response.OngoingTrip.TripRecordID, response.OngoingTrip.TripID, driverID, response.Stage, response.RedispatchTriggered)
 }
 
 func ongoingTripPayloadFrom(trip schemamodels.OngoingTrip) ongoingTripPayload {

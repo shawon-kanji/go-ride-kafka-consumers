@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"go-ride-kafka-consumers/services/trip-dispatch-worker/internal/config"
 	"github.com/shawon-kanji/go-ride-utils/events"
+	"go-ride-kafka-consumers/services/trip-dispatch-worker/internal/config"
 
 	"github.com/google/uuid"
 	schemamodels "github.com/shawon-kanji/go-ride-db-schema/models"
@@ -313,6 +313,86 @@ func buildJobOfferEvent(req schemamodels.TripRequest, offers []schemamodels.Driv
 		EventID:          uuid.NewString(),
 		PublishedAt:      time.Now().UTC(),
 	}
+}
+
+// HandleDriverCancellation reacts to a driver cancelling a trip they'd
+// already accepted, before trip start (stage "assigned"/"driver_arriving").
+// It resets the request back into the dispatch pool and immediately re-runs
+// AttemptDispatch, so the rider isn't left dangling waiting for the next
+// sweep tick. Guarded on the DB's own state (not just trusting the event)
+// so a stale/duplicate/redelivered message is a safe no-op: only a request
+// that is actually TripRequestStatusCancelled with CancelledBy == driver
+// gets reset.
+func (s *Service) HandleDriverCancellation(ctx context.Context, requestID uuid.UUID) error {
+	var triggered bool
+
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var req schemamodels.TripRequest
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("request_id = ?", requestID).
+			Take(&req).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("%w: request_id=%s", ErrRequestNotFound, requestID)
+		}
+		if err != nil {
+			return fmt.Errorf("lock trip request request_id=%s: %w", requestID, err)
+		}
+
+		if req.Status != schemamodels.TripRequestStatusCancelled || req.CancelledBy == nil || *req.CancelledBy != schemamodels.CancelledByDriver {
+			log.Printf("redispatch skipped request_id=%s status=%s (not a driver-cancelled request)", req.ID, req.Status)
+			return nil
+		}
+
+		now := time.Now().UTC()
+		if err := tx.Model(&schemamodels.TripRequest{}).
+			Where("request_id = ?", req.ID).
+			Updates(map[string]any{
+				"status":                 schemamodels.TripRequestStatusSearching,
+				"dispatch_attempt_count": 0,
+				"dispatch_radius_km":     nil,
+				"next_dispatch_at":       nil,
+				"cancelled_at":           nil,
+				"cancellation_reason":    nil,
+				"cancelled_by":           nil,
+				"updated_at":             now,
+			}).Error; err != nil {
+			return fmt.Errorf("reset trip request for redispatch request_id=%s: %w", req.ID, err)
+		}
+
+		payload, err := json.Marshal(map[string]any{"reason": "driver_cancelled"})
+		if err != nil {
+			return fmt.Errorf("marshal dispatch history payload request_id=%s: %w", req.ID, err)
+		}
+		fromStatus := schemamodels.TripRequestStatusCancelled
+		toStatus := schemamodels.TripRequestStatusSearching
+		history := schemamodels.TripHistory{
+			ID:            uuid.New(),
+			RequestID:     req.ID,
+			TripID:        req.TripID,
+			RiderID:       &req.RiderID,
+			EventType:     "dispatch_redispatch_triggered",
+			FromStatus:    &fromStatus,
+			ToStatus:      &toStatus,
+			EventPayload:  payload,
+			CorrelationID: req.CorrelationID,
+			CreatedAt:     now,
+		}
+		if err := tx.Create(&history).Error; err != nil {
+			return fmt.Errorf("write trip history request_id=%s: %w", req.ID, err)
+		}
+
+		triggered = true
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if !triggered {
+		return nil
+	}
+
+	log.Printf("redispatch triggered request_id=%s", requestID)
+	return s.AttemptDispatch(ctx, requestID)
 }
 
 func (s *Service) scheduleRetry(tx *gorm.DB, req schemamodels.TripRequest, attemptCount int, radius float64, now time.Time) error {

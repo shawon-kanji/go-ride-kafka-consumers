@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"go-ride-kafka-consumers/services/driver-request-handler/internal/config"
 	"github.com/shawon-kanji/go-ride-utils/events"
+	"go-ride-kafka-consumers/services/driver-request-handler/internal/config"
 
 	kafkago "github.com/segmentio/kafka-go"
 )
@@ -17,6 +17,7 @@ type Producer interface {
 	PublishRideStarted(ctx context.Context, event events.RideStartedV1) error
 	PublishRideEnded(ctx context.Context, event events.RideEndedV1) error
 	PublishRideCompleted(ctx context.Context, event events.RideCompletedV1) error
+	PublishRideCancelled(ctx context.Context, event events.RideCancelledV1) error
 	Close() error
 }
 
@@ -29,6 +30,8 @@ type RideAssignedProducer struct {
 	endedTopic      string
 	completedWriter *kafkago.Writer
 	completedTopic  string
+	cancelledWriter *kafkago.Writer
+	cancelledTopic  string
 }
 
 func NewRideAssignedProducer(cfg config.Config) *RideAssignedProducer {
@@ -76,6 +79,17 @@ func NewRideAssignedProducer(cfg config.Config) *RideAssignedProducer {
 		AllowAutoTopicCreation: false,
 	}
 
+	cancelledWriter := &kafkago.Writer{
+		Addr:                   kafkago.TCP(cfg.KafkaBrokers...),
+		Topic:                  cfg.CancelledTopic,
+		Balancer:               &kafkago.Hash{},
+		RequiredAcks:           kafkago.RequireOne,
+		BatchTimeout:           50 * time.Millisecond,
+		WriteTimeout:           5 * time.Second,
+		ReadTimeout:            5 * time.Second,
+		AllowAutoTopicCreation: false,
+	}
+
 	return &RideAssignedProducer{
 		writer:          writer,
 		topic:           cfg.AssignedTopic,
@@ -85,6 +99,8 @@ func NewRideAssignedProducer(cfg config.Config) *RideAssignedProducer {
 		endedTopic:      cfg.EndedTopic,
 		completedWriter: completedWriter,
 		completedTopic:  cfg.CompletedTopic,
+		cancelledWriter: cancelledWriter,
+		cancelledTopic:  cfg.CancelledTopic,
 	}
 }
 
@@ -164,6 +180,25 @@ func (p *RideAssignedProducer) PublishRideCompleted(ctx context.Context, event e
 	return nil
 }
 
+func (p *RideAssignedProducer) PublishRideCancelled(ctx context.Context, event events.RideCancelledV1) error {
+	payload, err := json.Marshal(event)
+	if err != nil {
+		return fmt.Errorf("marshal ride cancelled event: %w", err)
+	}
+
+	message := kafkago.Message{
+		Key:   []byte(event.RequestID),
+		Value: payload,
+		Time:  event.PublishedAt,
+	}
+
+	if err := p.cancelledWriter.WriteMessages(ctx, message); err != nil {
+		return fmt.Errorf("write kafka message topic=%s: %w", p.cancelledTopic, err)
+	}
+
+	return nil
+}
+
 func (p *RideAssignedProducer) Close() error {
 	if err := p.writer.Close(); err != nil {
 		return err
@@ -174,5 +209,8 @@ func (p *RideAssignedProducer) Close() error {
 	if err := p.endedWriter.Close(); err != nil {
 		return err
 	}
-	return p.completedWriter.Close()
+	if err := p.completedWriter.Close(); err != nil {
+		return err
+	}
+	return p.cancelledWriter.Close()
 }

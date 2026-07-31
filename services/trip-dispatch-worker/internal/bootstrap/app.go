@@ -14,12 +14,13 @@ import (
 )
 
 type App struct {
-	cfg         config.Config
-	sqlDB       *sql.DB
-	consumer    kafka.Consumer
-	producer    kafka.Producer
-	runner      *worker.Runner
-	sweepRunner *worker.SweepRunner
+	cfg            config.Config
+	sqlDB          *sql.DB
+	consumer       kafka.Consumer
+	cancelConsumer kafka.Consumer
+	producer       kafka.Producer
+	runner         *worker.Runner
+	sweepRunner    *worker.SweepRunner
 }
 
 func New(ctx context.Context, mode string) (*App, error) {
@@ -41,16 +42,18 @@ func New(ctx context.Context, mode string) (*App, error) {
 	producer := kafka.NewTripDispatcherProducer(cfg)
 	service := dispatch.NewService(gormDB, cfg, producer)
 	consumer := kafka.NewDispatchConsumer(cfg, service)
+	cancelConsumer := kafka.NewRideCancelledConsumer(cfg, service)
 	runner := worker.NewRunner(consumer)
 	sweepRunner := worker.NewSweepRunner(gormDB, service, cfg.DispatchSweepInterval, cfg.DispatchMaxAttempts)
 
 	return &App{
-		cfg:         cfg,
-		sqlDB:       sqlDB,
-		consumer:    consumer,
-		producer:    producer,
-		runner:      runner,
-		sweepRunner: sweepRunner,
+		cfg:            cfg,
+		sqlDB:          sqlDB,
+		consumer:       consumer,
+		cancelConsumer: cancelConsumer,
+		producer:       producer,
+		runner:         runner,
+		sweepRunner:    sweepRunner,
 	}, nil
 }
 
@@ -80,8 +83,39 @@ func (a *App) Run(ctx context.Context) error {
 	defer cancelSweep()
 	go func() { _ = a.sweepRunner.Run(sweepCtx) }()
 
-	if err := a.runner.Run(ctx); err != nil {
-		return fmt.Errorf("worker runner: %w", err)
+	// The dispatch consumer and the ride-cancelled/redispatch consumer run as
+	// two independent goroutines fanning into one error channel. A real
+	// failure in either cancels runCtx so the other stops too (it will see
+	// context.Canceled and return nil, a clean stop — the first real error is
+	// what gets returned), while a normal shutdown via the parent ctx lets
+	// both stop cleanly on their own.
+	runCtx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
+
+	consumerErrCh := make(chan error, 2)
+	go func() {
+		err := a.runner.Run(runCtx)
+		if err != nil {
+			cancelRun()
+		}
+		consumerErrCh <- err
+	}()
+	go func() {
+		err := a.cancelConsumer.Start(runCtx)
+		if err != nil {
+			cancelRun()
+		}
+		consumerErrCh <- err
+	}()
+
+	var firstErr error
+	for i := 0; i < 2; i++ {
+		if err := <-consumerErrCh; err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	if firstErr != nil {
+		return fmt.Errorf("worker runner: %w", firstErr)
 	}
 
 	log.Printf("service stopped=%s", a.cfg.ServiceName)

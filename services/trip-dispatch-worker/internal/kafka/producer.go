@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"go-ride-kafka-consumers/services/trip-dispatch-worker/internal/config"
 	"github.com/shawon-kanji/go-ride-utils/events"
+	"go-ride-kafka-consumers/services/trip-dispatch-worker/internal/config"
 
 	kafkago "github.com/segmentio/kafka-go"
 )

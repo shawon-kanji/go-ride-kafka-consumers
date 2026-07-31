@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(grep '\\\\.go$')",
-      "Bash(xargs -I{} sh -c 'echo ==={}===; cat {}')"
+      "Bash(xargs -I{} sh -c 'echo ==={}===; cat {}')",
+      "Bash(go get *)"
     ]
   }
 }
