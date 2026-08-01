@@ -3,7 +3,10 @@
     "allow": [
       "Bash(grep '\\\\.go$')",
       "Bash(xargs -I{} sh -c 'echo ==={}===; cat {}')",
-      "Bash(go get *)"
+      "Bash(go get *)",
+      "Bash(docker info *)",
+      "Bash(docker compose *)",
+      "Bash(psql --version)"
     ]
   }
 }

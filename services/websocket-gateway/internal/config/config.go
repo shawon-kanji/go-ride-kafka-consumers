@@ -47,9 +47,10 @@ type Config struct {
 	// is the sole "stop forwarding" mechanism for now.
 	ActiveTripTTL time.Duration
 
-	JWTSecret   string
-	JWTIssuer   string
-	JWTAudience string
+	JWTSecret         string
+	JWTIssuer         string
+	JWTDriverAudience string
+	JWTRiderAudience  string
 
 	PingInterval time.Duration
 	PongWait     time.Duration
@@ -168,9 +169,10 @@ func Load(ctx context.Context) (Config, error) {
 
 		ActiveTripTTL: time.Duration(activeTripTTLSeconds) * time.Second,
 
-		JWTSecret:   jwtSecret,
-		JWTIssuer:   getEnv("JWT_ISSUER", "go-ride-backend"),
-		JWTAudience: getEnv("JWT_AUDIENCE", "go-ride-driver-app"),
+		JWTSecret:         jwtSecret,
+		JWTIssuer:         getEnv("JWT_ISSUER", "go-ride-backend"),
+		JWTDriverAudience: getEnv("JWT_DRIVER_AUDIENCE", "go-ride-drivers"),
+		JWTRiderAudience:  getEnv("JWT_RIDER_AUDIENCE", "go-ride-clients"),
 
 		PingInterval: time.Duration(pingIntervalSeconds) * time.Second,
 		PongWait:     time.Duration(pongWaitSeconds) * time.Second,
@@ -212,8 +214,11 @@ func Load(ctx context.Context) (Config, error) {
 	if cfg.JWTIssuer == "" {
 		return Config{}, fmt.Errorf("JWT_ISSUER is required")
 	}
-	if cfg.JWTAudience == "" {
-		return Config{}, fmt.Errorf("JWT_AUDIENCE is required")
+	if cfg.JWTDriverAudience == "" {
+		return Config{}, fmt.Errorf("JWT_DRIVER_AUDIENCE is required")
+	}
+	if cfg.JWTRiderAudience == "" {
+		return Config{}, fmt.Errorf("JWT_RIDER_AUDIENCE is required")
 	}
 	if cfg.PingInterval <= 0 {
 		return Config{}, fmt.Errorf("WS_PING_INTERVAL_SECONDS must be greater than zero")

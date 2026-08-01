@@ -36,7 +36,8 @@ env:
     DB_SSLMODE: require
     REDIS_PASSWORD: ""
     JWT_ISSUER: go-ride-backend
-    JWT_AUDIENCE: go-ride-driver-app
+    JWT_DRIVER_AUDIENCE: go-ride-drivers
+    JWT_RIDER_AUDIENCE: go-ride-clients
     # KAFKA_BROKERS, DB_HOST, REDIS_ADDR set from Terraform outputs for this environment
   secretRefs: []
 

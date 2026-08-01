@@ -25,6 +25,7 @@ env:
     REDIS_ADDR: redis-master.go-ride-local.svc.cluster.local:6379
     REDIS_PASSWORD: ""
     JWT_ISSUER: go-ride-backend
-    JWT_AUDIENCE: go-ride-driver-app
+    JWT_DRIVER_AUDIENCE: go-ride-drivers
+    JWT_RIDER_AUDIENCE: go-ride-clients
   secretRefs:
     - go-ride-local-secrets

@@ -53,7 +53,8 @@ env:
     DB_SSLMODE: disable
     REDIS_PASSWORD: ""
     JWT_ISSUER: go-ride-backend
-    JWT_AUDIENCE: go-ride-driver-app
+    JWT_DRIVER_AUDIENCE: go-ride-drivers
+    JWT_RIDER_AUDIENCE: go-ride-clients
   secretRefs: []
 
 secretsManager:

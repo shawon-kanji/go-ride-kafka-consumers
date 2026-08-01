@@ -25,24 +25,28 @@ var upgrader = websocket.Upgrader{
 // imported directly, since internal/offers imports internal/ws and a direct
 // import back would cycle.
 type Server struct {
-	hub          *Hub
-	riderHub     *RiderHub
-	verifier     *auth.Verifier
-	pingInterval time.Duration
-	pongWait     time.Duration
-	onConnect    func(ctx context.Context, conn *Connection)
-	onAck        func(ctx context.Context, ack AckMessage)
+	hub            *Hub
+	riderHub       *RiderHub
+	verifier       *auth.Verifier
+	driverAudience string
+	riderAudience  string
+	pingInterval   time.Duration
+	pongWait       time.Duration
+	onConnect      func(ctx context.Context, conn *Connection)
+	onAck          func(ctx context.Context, ack AckMessage)
 }
 
-func NewServer(hub *Hub, riderHub *RiderHub, verifier *auth.Verifier, pingInterval, pongWait time.Duration, onConnect func(ctx context.Context, conn *Connection), onAck func(ctx context.Context, ack AckMessage)) *Server {
+func NewServer(hub *Hub, riderHub *RiderHub, verifier *auth.Verifier, driverAudience, riderAudience string, pingInterval, pongWait time.Duration, onConnect func(ctx context.Context, conn *Connection), onAck func(ctx context.Context, ack AckMessage)) *Server {
 	return &Server{
-		hub:          hub,
-		riderHub:     riderHub,
-		verifier:     verifier,
-		pingInterval: pingInterval,
-		pongWait:     pongWait,
-		onConnect:    onConnect,
-		onAck:        onAck,
+		hub:            hub,
+		riderHub:       riderHub,
+		verifier:       verifier,
+		driverAudience: driverAudience,
+		riderAudience:  riderAudience,
+		pingInterval:   pingInterval,
+		pongWait:       pongWait,
+		onConnect:      onConnect,
+		onAck:          onAck,
 	}
 }
 
@@ -69,7 +73,7 @@ func (s *Server) handleDriverWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	claims, err := s.verifier.Parse(token)
+	claims, err := s.verifier.Parse(token, s.driverAudience)
 	if err != nil || claims.Role != auth.DriverRole {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
@@ -112,7 +116,7 @@ func (s *Server) handleRiderWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	claims, err := s.verifier.Parse(token)
+	claims, err := s.verifier.Parse(token, s.riderAudience)
 	if err != nil || claims.Role != auth.RiderRole {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return

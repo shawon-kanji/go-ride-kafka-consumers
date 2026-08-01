@@ -24,20 +24,24 @@ const (
 type Verifier struct {
 	secretKey []byte
 	issuer    string
-	audience  string
 }
 
-func NewVerifier(secret, issuer, audience string) *Verifier {
-	return &Verifier{secretKey: []byte(secret), issuer: issuer, audience: audience}
+func NewVerifier(secret, issuer string) *Verifier {
+	return &Verifier{secretKey: []byte(secret), issuer: issuer}
 }
 
-func (v *Verifier) Parse(tokenValue string) (*Claims, error) {
+// Parse verifies everything except audience up front, then checks the caller-
+// supplied expectedAudience — this gateway serves two routes (driver and
+// rider WebSocket upgrades) that must each only accept tokens minted for
+// them, so a single fixed audience baked into the Verifier can't be correct
+// for both; the caller (one per route) decides which audience applies.
+func (v *Verifier) Parse(tokenValue, expectedAudience string) (*Claims, error) {
 	token, err := jwt.ParseWithClaims(tokenValue, &Claims{}, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
 		return v.secretKey, nil
-	}, jwt.WithIssuer(v.issuer), jwt.WithAudience(v.audience), jwt.WithExpirationRequired())
+	}, jwt.WithIssuer(v.issuer), jwt.WithAudience(expectedAudience), jwt.WithExpirationRequired())
 	if err != nil {
 		return nil, err
 	}

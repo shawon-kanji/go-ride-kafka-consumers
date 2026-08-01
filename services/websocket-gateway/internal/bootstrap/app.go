@@ -105,7 +105,7 @@ func New(ctx context.Context) (*App, error) {
 	tripCancelledNotifier := tripcancel.NewNotifier(locationStore, tripCancelledBus)
 	rideCancelledConsumer := kafka.NewRideCancelledConsumer(cfg, tripCancelledNotifier)
 
-	verifier := auth.NewVerifier(cfg.JWTSecret, cfg.JWTIssuer, cfg.JWTAudience)
+	verifier := auth.NewVerifier(cfg.JWTSecret, cfg.JWTIssuer)
 
 	onConnect := func(ctx context.Context, conn *ws.Connection) {
 		if err := replayer.Replay(ctx, conn); err != nil {
@@ -123,7 +123,7 @@ func New(ctx context.Context) (*App, error) {
 		}
 	}
 
-	wsServer := ws.NewServer(hub, riderHub, verifier, cfg.PingInterval, cfg.PongWait, onConnect, onAck)
+	wsServer := ws.NewServer(hub, riderHub, verifier, cfg.JWTDriverAudience, cfg.JWTRiderAudience, cfg.PingInterval, cfg.PongWait, onConnect, onAck)
 	mux := http.NewServeMux()
 	wsServer.Routes(mux)
 
