@@ -57,8 +57,8 @@ github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZb
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/segmentio/kafka-go v0.4.47 h1:IqziR4pA3vrZq7YdRxaT3w1/5fvIH5qpCwstUanQQB0=
 github.com/segmentio/kafka-go v0.4.47/go.mod h1:HjF6XbOKh0Pjlkr5GVZxt6CsjjwnmhVOfURM5KMd8qg=
-github.com/shawon-kanji/go-ride-db-schema v0.3.5 h1:Ov5vGez457MoCKslhXzsM3VsBEafZuujvulJ8T2oSzw=
-github.com/shawon-kanji/go-ride-db-schema v0.3.5/go.mod h1:d/kEFxnGKhbusE0ZcsH1AkRRDWcIT8MM6n+MYBV5RUQ=
+github.com/shawon-kanji/go-ride-db-schema v0.3.6 h1:o8xSZKHtcXNyUPUMGBhwIv1VPrelVpGNVAHYOyV6Umc=
+github.com/shawon-kanji/go-ride-db-schema v0.3.6/go.mod h1:d/kEFxnGKhbusE0ZcsH1AkRRDWcIT8MM6n+MYBV5RUQ=
 github.com/shawon-kanji/go-ride-utils v0.1.2 h1:/k71lWfTba/JBLqdut2V5pgB/IM4W9mQ8iepxasqZLM=
 github.com/shawon-kanji/go-ride-utils v0.1.2/go.mod h1:L0dnMw7GvTqY8SMVicf1jc6nRbjd5xogcgGr96RNp34=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=

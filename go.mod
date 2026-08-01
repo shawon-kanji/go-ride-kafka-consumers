@@ -4,7 +4,7 @@ go 1.25.3
 
 require (
 	github.com/google/uuid v1.6.0
-	github.com/shawon-kanji/go-ride-db-schema v0.3.3
+	github.com/shawon-kanji/go-ride-db-schema v0.3.6
 	github.com/shawon-kanji/go-ride-utils v0.1.0
 	gorm.io/driver/postgres v1.6.0
 	gorm.io/gorm v1.31.1
