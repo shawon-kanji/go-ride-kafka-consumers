@@ -138,24 +138,76 @@ func (s *Service) AcceptOffer(ctx context.Context, jobOfferID, driverID uuid.UUI
 			return fmt.Errorf("load active vehicle driver_id=%s: %w", driverID, err)
 		}
 
-		ongoingTrip := schemamodels.OngoingTrip{
-			ID:         uuid.New(),
-			RequestID:  request.ID,
-			TripID:     request.TripID,
-			RiderID:    request.RiderID,
-			DriverID:   driverID,
-			VehicleID:  vehicleID,
-			Status:     schemamodels.OngoingTripStatusAssigned,
-			PickupLat:  request.PickupLat,
-			PickupLng:  request.PickupLng,
-			DropoffLat: request.DropoffLat,
-			DropoffLng: request.DropoffLng,
-			AssignedAt: now,
-			CreatedAt:  now,
-			UpdatedAt:  now,
-		}
-		if err := tx.Create(&ongoingTrip).Error; err != nil {
-			return fmt.Errorf("create ongoing trip: %w", err)
+		// ongoing_trips.request_id is uniquely constrained for the request's
+		// entire lifetime, so a request that's been redispatched after a prior
+		// driver cancelled (its ongoing_trips row already exists, in status
+		// cancelled) can't get a second row via a plain INSERT. Reuse that row
+		// in place for the new assignment instead — the full history of prior
+		// assignments already lives in trip_history, not here.
+		var ongoingTrip schemamodels.OngoingTrip
+		var existingTrip schemamodels.OngoingTrip
+		err = tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("request_id = ?", request.ID).
+			Take(&existingTrip).Error
+		switch {
+		case errors.Is(err, gorm.ErrRecordNotFound):
+			ongoingTrip = schemamodels.OngoingTrip{
+				ID:         uuid.New(),
+				RequestID:  request.ID,
+				TripID:     request.TripID,
+				RiderID:    request.RiderID,
+				DriverID:   driverID,
+				VehicleID:  vehicleID,
+				Status:     schemamodels.OngoingTripStatusAssigned,
+				PickupLat:  request.PickupLat,
+				PickupLng:  request.PickupLng,
+				DropoffLat: request.DropoffLat,
+				DropoffLng: request.DropoffLng,
+				AssignedAt: now,
+				CreatedAt:  now,
+				UpdatedAt:  now,
+			}
+			if err := tx.Create(&ongoingTrip).Error; err != nil {
+				return fmt.Errorf("create ongoing trip: %w", err)
+			}
+		case err != nil:
+			return fmt.Errorf("lock existing ongoing trip request_id=%s: %w", request.ID, err)
+		default:
+			if err := tx.Model(&schemamodels.OngoingTrip{}).
+				Where("id = ?", existingTrip.ID).
+				Updates(map[string]any{
+					"driver_id":            driverID,
+					"vehicle_id":           vehicleID,
+					"status":               schemamodels.OngoingTripStatusAssigned,
+					"assigned_at":          now,
+					"started_at":           nil,
+					"ended_at":             nil,
+					"completed_at":         nil,
+					"cancelled_at":         nil,
+					"cancellation_reason":  nil,
+					"cancelled_by":         nil,
+					"final_fare":           nil,
+					"payment_status":       nil,
+					"payment_collected_at": nil,
+					"updated_at":           now,
+				}).Error; err != nil {
+				return fmt.Errorf("reassign ongoing trip request_id=%s: %w", request.ID, err)
+			}
+			ongoingTrip = existingTrip
+			ongoingTrip.DriverID = driverID
+			ongoingTrip.VehicleID = vehicleID
+			ongoingTrip.Status = schemamodels.OngoingTripStatusAssigned
+			ongoingTrip.AssignedAt = now
+			ongoingTrip.StartedAt = nil
+			ongoingTrip.EndedAt = nil
+			ongoingTrip.CompletedAt = nil
+			ongoingTrip.CancelledAt = nil
+			ongoingTrip.CancellationReason = nil
+			ongoingTrip.CancelledBy = nil
+			ongoingTrip.FinalFare = nil
+			ongoingTrip.PaymentStatus = nil
+			ongoingTrip.PaymentCollectedAt = nil
+			ongoingTrip.UpdatedAt = now
 		}
 
 		eventPayload, err := json.Marshal(map[string]any{

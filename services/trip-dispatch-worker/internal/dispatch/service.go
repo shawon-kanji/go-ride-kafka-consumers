@@ -216,6 +216,7 @@ func (s *Service) AttemptDispatch(ctx context.Context, requestID uuid.UUID) erro
 func (s *Service) createOffers(tx *gorm.DB, req schemamodels.TripRequest, candidates []driverCandidate, previousStatus string, attemptCount int, radius float64, now time.Time) ([]schemamodels.DriverJobOffer, error) {
 	offers := make([]schemamodels.DriverJobOffer, len(candidates))
 	driverIDs := make([]string, len(candidates))
+	driverUUIDs := make([]uuid.UUID, len(candidates))
 	expiresAt := now.Add(time.Duration(s.cfg.JobOfferTTLSeconds) * time.Second)
 
 	for i, candidate := range candidates {
@@ -234,10 +235,37 @@ func (s *Service) createOffers(tx *gorm.DB, req schemamodels.TripRequest, candid
 			UpdatedAt:      now,
 		}
 		driverIDs[i] = candidate.DriverID.String()
+		driverUUIDs[i] = candidate.DriverID
 	}
 
-	if err := tx.Create(&offers).Error; err != nil {
+	// A candidate driver can already have a driver_job_offers row for this
+	// exact request_id from an earlier dispatch attempt — most notably, the
+	// driver who lost out to whoever just accepted (their offer sits
+	// "expired") when a redispatch (driver-cancellation) resets the request
+	// back into the pool and re-offers to the same pool of nearby drivers.
+	// (request_id, driver_id) is uniquely indexed for the request's lifetime,
+	// so a plain INSERT would violate that constraint; upsert onto the
+	// existing row instead, resetting it to a fresh pending offer.
+	if err := tx.Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "request_id"}, {Name: "driver_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{
+			"offer_rank", "status", "delivery_status", "delivery_attempts",
+			"response_reason", "correlation_id", "offered_at", "expires_at",
+			"responded_at", "withdrawn_at", "updated_at",
+		}),
+	}).Create(&offers).Error; err != nil {
 		return nil, fmt.Errorf("create driver job offers request_id=%s: %w", req.ID, err)
+	}
+
+	// Reload rather than trust offers[i].ID from the upsert: on the
+	// ON CONFLICT DO UPDATE path the pre-existing row's primary key (not the
+	// locally generated uuid.New() above) is what's actually persisted, and
+	// that's the job_offer_id downstream consumers (the job-offer Kafka
+	// event, the driver's accept call) must reference.
+	if err := tx.Where("request_id = ? AND driver_id IN ?", req.ID, driverUUIDs).
+		Order("offer_rank ASC").
+		Find(&offers).Error; err != nil {
+		return nil, fmt.Errorf("reload driver job offers request_id=%s: %w", req.ID, err)
 	}
 
 	if err := tx.Model(&schemamodels.TripRequest{}).Where("request_id = ?", req.ID).Updates(map[string]any{
@@ -335,6 +363,13 @@ func buildJobOfferEvent(req schemamodels.TripRequest, offers []schemamodels.Driv
 // so a stale/duplicate/redelivered message is a safe no-op: only a request
 // that is actually TripRequestStatusCancelled with CancelledBy == driver
 // gets reset.
+//
+// next_dispatch_at is set to now (not nil) as part of that reset: the reset
+// transaction commits independently of the immediate AttemptDispatch call
+// below, so if that call fails for any reason (including one it can't itself
+// recover from), the request must not be left permanently stranded in
+// "searching" with nothing left to pick it up — the periodic sweep, which
+// only scans rows with next_dispatch_at due, is the safety net.
 func (s *Service) HandleDriverCancellation(ctx context.Context, requestID uuid.UUID) error {
 	var triggered bool
 
@@ -362,7 +397,7 @@ func (s *Service) HandleDriverCancellation(ctx context.Context, requestID uuid.U
 				"status":                 schemamodels.TripRequestStatusSearching,
 				"dispatch_attempt_count": 0,
 				"dispatch_radius_km":     nil,
-				"next_dispatch_at":       nil,
+				"next_dispatch_at":       now,
 				"cancelled_at":           nil,
 				"cancellation_reason":    nil,
 				"cancelled_by":           nil,
