@@ -6,7 +6,8 @@
       "Bash(go get *)",
       "Bash(docker info *)",
       "Bash(docker compose *)",
-      "Bash(psql --version)"
+      "Bash(psql --version)",
+      "Bash(PGPASSWORD=postgres psql -h localhost -U postgres -d go_ride -c \"\\\\d drivers\")"
     ]
   }
 }

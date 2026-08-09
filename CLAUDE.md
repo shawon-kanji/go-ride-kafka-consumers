@@ -39,9 +39,9 @@ make migrate-version
 
 ## Commands
 
-Local infra (Kafka via docker-compose; Postgres is expected to run separately, e.g. from `go-ride-db-schema` or your own container):
+Local infra (Kafka, Redis, Postgres, AIStor — via the consolidated compose file in the sibling `go-ride-infra` repo; `make up`/`make down` here delegate there, so `go-ride-infra` must be checked out as a sibling directory):
 ```bash
-make up            # start Kafka (docker compose)
+make up            # start Kafka/Redis/Postgres/AIStor (docker compose, in ../go-ride-infra/local)
 make down
 make topic-create-all   # create all known topics (driver.location.updated.v1, ride.requested.v1, ride.assigned.v1, ride.unassigned.v1)
 ```

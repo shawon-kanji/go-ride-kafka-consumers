@@ -1,4 +1,6 @@
-COMPOSE ?= docker compose
+# Backing services (Kafka, Redis, Postgres, AIStor) are provisioned by the
+# consolidated compose file in the sibling go-ride-infra repo, not here.
+COMPOSE ?= cd ../go-ride-infra/local && docker compose
 SERVICE ?= kafka
 TOPIC ?= driver.location.updated.v1
 LOCATION_TOPIC ?= driver.location.updated.v1
