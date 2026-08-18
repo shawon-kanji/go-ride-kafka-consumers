@@ -43,19 +43,32 @@ func (d *Deliverer) HandleBroadcast(ctx context.Context, payload []byte) {
 			continue
 		}
 
+		var tripDistanceKM, tripDurationMinutes float64
+		if event.TripDistanceKM != nil {
+			tripDistanceKM = *event.TripDistanceKM
+		}
+		if event.TripDurationMinutes != nil {
+			tripDurationMinutes = *event.TripDurationMinutes
+		}
+
 		message := ws.NewJobOfferMessage(ws.JobOfferParams{
-			JobOfferID:       entry.JobOfferID,
-			RequestID:        event.RequestID,
-			TripID:           event.TripID,
-			OfferRank:        entry.OfferRank,
-			PickupLat:        event.PickupLat,
-			PickupLng:        event.PickupLng,
-			DropoffLat:       event.DropoffLat,
-			DropoffLng:       event.DropoffLng,
-			EstimatedEarning: event.EstimatedEarning,
-			CurrencyCode:     event.CurrencyCode,
-			ExpiresAt:        entry.ExpiresAt,
-			CorrelationID:    event.CorrelationID,
+			JobOfferID:          entry.JobOfferID,
+			RequestID:           event.RequestID,
+			TripID:              event.TripID,
+			OfferRank:           entry.OfferRank,
+			RiderName:           event.RiderName,
+			PickupLat:           event.PickupLat,
+			PickupLng:           event.PickupLng,
+			DropoffLat:          event.DropoffLat,
+			DropoffLng:          event.DropoffLng,
+			TripDistanceKM:      tripDistanceKM,
+			TripDurationMinutes: tripDurationMinutes,
+			PickupDistanceKM:    entry.PickupDistanceKM,
+			PickupETAMinutes:    entry.PickupETAMinutes,
+			EstimatedEarning:    event.EstimatedEarning,
+			CurrencyCode:        event.CurrencyCode,
+			ExpiresAt:           entry.ExpiresAt,
+			CorrelationID:       event.CorrelationID,
 		})
 
 		payload, err := json.Marshal(message)

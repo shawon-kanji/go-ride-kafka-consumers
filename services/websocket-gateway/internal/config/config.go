@@ -66,6 +66,7 @@ type Config struct {
 	// a trip's fare had no real route (cab-request-handler's directions
 	// provider was unavailable at estimate time) — same default as that
 	// service's own FARE_AVERAGE_SPEED_KPH fallback, kept in sync manually.
+	// Also backs offers.Replayer's recomputed pickup ETA on reconnect.
 	FallbackAvgSpeedKPH float64
 }
 

@@ -62,7 +62,7 @@ func New(ctx context.Context) (*App, error) {
 	}
 
 	store := offers.NewStore(gormDB)
-	replayer := offers.NewReplayer(gormDB, store, cfg.ReplayBatch, cfg.DriverCommissionRate)
+	replayer := offers.NewReplayer(gormDB, store, cfg.ReplayBatch, cfg.DriverCommissionRate, cfg.FallbackAvgSpeedKPH)
 
 	hub := ws.NewHub()
 	deliverer := offers.NewDeliverer(hub, store)

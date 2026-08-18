@@ -14,52 +14,71 @@ type JobOfferMessage struct {
 	TripID           string    `json:"trip_id"`
 	OfferRank        int       `json:"offer_rank"`
 	OfferVersion     int       `json:"offer_version"`
+	RiderName        string    `json:"rider_name,omitempty"`
 	PickupLat        float64   `json:"pickup_lat"`
 	PickupLng        float64   `json:"pickup_lng"`
 	DropoffLat       float64   `json:"dropoff_lat"`
 	DropoffLng       float64   `json:"dropoff_lng"`
-	EstimatedEarning float64   `json:"estimated_earning,omitempty"`
-	CurrencyCode     string    `json:"currency_code,omitempty"`
-	ExpiresAt        time.Time `json:"expires_at"`
-	CorrelationID    string    `json:"correlation_id,omitempty"`
-	SentAt           time.Time `json:"sent_at"`
+	// TripDistanceKM/TripDurationMinutes are the whole trip's real route
+	// (pickup to dropoff); zero when the fare had none (haversine fallback
+	// at estimate time). PickupDistanceKM/PickupETAMinutes are this
+	// specific driver's distance to the pickup point.
+	TripDistanceKM      float64   `json:"trip_distance_km,omitempty"`
+	TripDurationMinutes float64   `json:"trip_duration_minutes,omitempty"`
+	PickupDistanceKM    float64   `json:"pickup_distance_km"`
+	PickupETAMinutes    float64   `json:"pickup_eta_minutes"`
+	EstimatedEarning    float64   `json:"estimated_earning,omitempty"`
+	CurrencyCode        string    `json:"currency_code,omitempty"`
+	ExpiresAt           time.Time `json:"expires_at"`
+	CorrelationID       string    `json:"correlation_id,omitempty"`
+	SentAt              time.Time `json:"sent_at"`
 }
 
 // JobOfferParams carries the fields needed to build a JobOfferMessage,
 // grouped here so callers (the live-push and replay paths) don't have to
 // match a long positional argument list.
 type JobOfferParams struct {
-	JobOfferID       string
-	RequestID        string
-	TripID           string
-	OfferRank        int
-	PickupLat        float64
-	PickupLng        float64
-	DropoffLat       float64
-	DropoffLng       float64
-	EstimatedEarning float64
-	CurrencyCode     string
-	ExpiresAt        time.Time
-	CorrelationID    string
+	JobOfferID          string
+	RequestID           string
+	TripID              string
+	OfferRank           int
+	RiderName           string
+	PickupLat           float64
+	PickupLng           float64
+	DropoffLat          float64
+	DropoffLng          float64
+	TripDistanceKM      float64
+	TripDurationMinutes float64
+	PickupDistanceKM    float64
+	PickupETAMinutes    float64
+	EstimatedEarning    float64
+	CurrencyCode        string
+	ExpiresAt           time.Time
+	CorrelationID       string
 }
 
 func NewJobOfferMessage(p JobOfferParams) JobOfferMessage {
 	return JobOfferMessage{
-		Type:             "job_offer",
-		JobOfferID:       p.JobOfferID,
-		RequestID:        p.RequestID,
-		TripID:           p.TripID,
-		OfferRank:        p.OfferRank,
-		OfferVersion:     offerVersion,
-		PickupLat:        p.PickupLat,
-		PickupLng:        p.PickupLng,
-		DropoffLat:       p.DropoffLat,
-		DropoffLng:       p.DropoffLng,
-		EstimatedEarning: p.EstimatedEarning,
-		CurrencyCode:     p.CurrencyCode,
-		ExpiresAt:        p.ExpiresAt,
-		CorrelationID:    p.CorrelationID,
-		SentAt:           time.Now().UTC(),
+		Type:                "job_offer",
+		JobOfferID:          p.JobOfferID,
+		RequestID:           p.RequestID,
+		TripID:              p.TripID,
+		OfferRank:           p.OfferRank,
+		OfferVersion:        offerVersion,
+		RiderName:           p.RiderName,
+		PickupLat:           p.PickupLat,
+		PickupLng:           p.PickupLng,
+		DropoffLat:          p.DropoffLat,
+		DropoffLng:          p.DropoffLng,
+		TripDistanceKM:      p.TripDistanceKM,
+		TripDurationMinutes: p.TripDurationMinutes,
+		PickupDistanceKM:    p.PickupDistanceKM,
+		PickupETAMinutes:    p.PickupETAMinutes,
+		EstimatedEarning:    p.EstimatedEarning,
+		CurrencyCode:        p.CurrencyCode,
+		ExpiresAt:           p.ExpiresAt,
+		CorrelationID:       p.CorrelationID,
+		SentAt:              time.Now().UTC(),
 	}
 }
 
