@@ -29,6 +29,14 @@ var ErrRequestNotFound = errors.New("trip request not found")
 // the same request during redispatch.
 const driverCancelledEventType = "driver_cancelled"
 
+// The JOIN drivers d ... AND d.is_online AND NOT d.is_paused clause fixes a
+// real gap, not just a Pause feature add-on: before this, is_online was
+// never checked anywhere in dispatch at all -- a driver who tapped
+// "offline" but whose app kept sending location pings (or whose last ping
+// was still within DriverLocationFreshWindow) could still be matched and
+// offered rides. Going offline only ever worked in practice because most
+// driver apps also stop the location stream and/or close the websocket on
+// that same tap; the backend itself never enforced it.
 const nearestDriversQueryTemplate = `
 WITH candidate_distances AS (
     SELECT
@@ -43,7 +51,10 @@ WITH candidate_distances AS (
             )
         ) AS distance_km
     FROM driver_locations dl
+    JOIN drivers d ON d.id = dl.driver_id
     WHERE dl.recorded_at >= ?
+      AND d.is_online = true
+      AND d.is_paused = false
       %s
 )
 SELECT cd.driver_id, cd.distance_km
