@@ -124,6 +124,7 @@ func NewService(db *gorm.DB, cfg config.Config, producer Producer) *Service {
 func (s *Service) AttemptDispatch(ctx context.Context, requestID uuid.UUID) error {
 	var req schemamodels.TripRequest
 	var createdOffers []schemamodels.DriverJobOffer
+	var pickupDistances map[uuid.UUID]float64
 
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
@@ -174,6 +175,11 @@ func (s *Service) AttemptDispatch(ctx context.Context, requestID uuid.UUID) erro
 				return err
 			}
 			createdOffers = offers
+
+			pickupDistances = make(map[uuid.UUID]float64, len(candidates))
+			for _, c := range candidates {
+				pickupDistances[c.DriverID] = c.DistanceKM
+			}
 			return nil
 		}
 
@@ -205,7 +211,15 @@ func (s *Service) AttemptDispatch(ctx context.Context, requestID uuid.UUID) erro
 		}
 	}
 
-	event := buildJobOfferEvent(req, createdOffers, fare, s.cfg.DriverCommissionRate)
+	var riderName string
+	var rider schemamodels.User
+	if err := s.db.WithContext(ctx).Where("id = ?", req.RiderID).Take(&rider).Error; err == nil {
+		riderName = strings.TrimSpace(rider.FirstName + " " + rider.LastName)
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return fmt.Errorf("load rider for job offer event request_id=%s: %w", req.ID, err)
+	}
+
+	event := buildJobOfferEvent(req, createdOffers, fare, riderName, pickupDistances, s.cfg.DriverCommissionRate, s.cfg.PickupETAAvgSpeedKPH)
 	if err := s.producer.PublishJobOffer(ctx, event); err != nil {
 		return fmt.Errorf("publish job offer event request_id=%s: %w", req.ID, err)
 	}
@@ -314,15 +328,23 @@ func (s *Service) createOffers(tx *gorm.DB, req schemamodels.TripRequest, candid
 // gateway after the dispatch transaction has committed. Pickup/dropoff are
 // denormalized here so the gateway's live-push path never needs a
 // trip_requests join (only its low-frequency reconnect-replay path does).
-func buildJobOfferEvent(req schemamodels.TripRequest, offers []schemamodels.DriverJobOffer, fare *schemamodels.TripFare, commissionRate float64) events.JobOfferV1 {
+// pickupDistances is keyed by driver_id, taken from the same Haversine
+// distance the nearest-driver search already computed — no extra query per
+// candidate. A driver missing from the map (shouldn't happen, since offers
+// are only ever created from that same candidate list) gets a zero distance
+// rather than a panic.
+func buildJobOfferEvent(req schemamodels.TripRequest, offers []schemamodels.DriverJobOffer, fare *schemamodels.TripFare, riderName string, pickupDistances map[uuid.UUID]float64, commissionRate, pickupETAAvgSpeedKPH float64) events.JobOfferV1 {
 	entries := make([]events.JobOfferEntry, len(offers))
 	for i, offer := range offers {
+		distanceKM := pickupDistances[offer.DriverID]
 		entries[i] = events.JobOfferEntry{
-			JobOfferID: offer.ID.String(),
-			DriverID:   offer.DriverID.String(),
-			OfferRank:  offer.OfferRank,
-			OfferedAt:  offer.OfferedAt,
-			ExpiresAt:  offer.ExpiresAt,
+			JobOfferID:       offer.ID.String(),
+			DriverID:         offer.DriverID.String(),
+			OfferRank:        offer.OfferRank,
+			PickupDistanceKM: distanceKM,
+			PickupETAMinutes: (distanceKM / pickupETAAvgSpeedKPH) * 60,
+			OfferedAt:        offer.OfferedAt,
+			ExpiresAt:        offer.ExpiresAt,
 		}
 	}
 
@@ -333,25 +355,31 @@ func buildJobOfferEvent(req schemamodels.TripRequest, offers []schemamodels.Driv
 
 	var estimatedEarning float64
 	var currencyCode string
+	var tripDistanceKM, tripDurationMinutes *float64
 	if fare != nil {
 		estimatedEarning = fare.TotalFare * (1 - commissionRate)
 		currencyCode = fare.CurrencyCode
+		tripDistanceKM = fare.RouteDistanceKM
+		tripDurationMinutes = fare.RouteDurationMinutes
 	}
 
 	return events.JobOfferV1{
-		RequestID:        req.ID.String(),
-		TripID:           req.TripID.String(),
-		RiderID:          req.RiderID.String(),
-		PickupLat:        req.PickupLat,
-		PickupLng:        req.PickupLng,
-		DropoffLat:       req.DropoffLat,
-		DropoffLng:       req.DropoffLng,
-		Offers:           entries,
-		EstimatedEarning: estimatedEarning,
-		CurrencyCode:     currencyCode,
-		CorrelationID:    correlationID,
-		EventID:          uuid.NewString(),
-		PublishedAt:      time.Now().UTC(),
+		RequestID:           req.ID.String(),
+		TripID:              req.TripID.String(),
+		RiderID:             req.RiderID.String(),
+		RiderName:           riderName,
+		PickupLat:           req.PickupLat,
+		PickupLng:           req.PickupLng,
+		DropoffLat:          req.DropoffLat,
+		DropoffLng:          req.DropoffLng,
+		TripDistanceKM:      tripDistanceKM,
+		TripDurationMinutes: tripDurationMinutes,
+		Offers:              entries,
+		EstimatedEarning:    estimatedEarning,
+		CurrencyCode:        currencyCode,
+		CorrelationID:       correlationID,
+		EventID:             uuid.NewString(),
+		PublishedAt:         time.Now().UTC(),
 	}
 }
 

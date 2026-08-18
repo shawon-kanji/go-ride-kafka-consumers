@@ -35,6 +35,11 @@ type Config struct {
 	JobOfferTTLSeconds        int
 	DispatchSweepInterval     time.Duration
 	DriverCommissionRate      float64
+
+	// PickupETAAvgSpeedKPH backs each offer's pickup_eta_minutes — same
+	// default as cab-request-handler's FARE_AVERAGE_SPEED_KPH fallback and
+	// websocket-gateway's FALLBACK_AVG_SPEED_KPH, kept in sync manually.
+	PickupETAAvgSpeedKPH float64
 }
 
 type DBConfig struct {
@@ -122,6 +127,11 @@ func Load(ctx context.Context, mode string) (Config, error) {
 		return Config{}, fmt.Errorf("invalid DRIVER_COMMISSION_RATE: %w", err)
 	}
 
+	pickupETAAvgSpeedKPH, err := getFloatEnv("PICKUP_ETA_AVERAGE_SPEED_KPH", 30)
+	if err != nil {
+		return Config{}, fmt.Errorf("invalid PICKUP_ETA_AVERAGE_SPEED_KPH: %w", err)
+	}
+
 	cfg := Config{
 		ServiceName: getEnv("SERVICE_NAME", "trip-dispatch-worker"),
 		Mode:        mode,
@@ -152,6 +162,7 @@ func Load(ctx context.Context, mode string) (Config, error) {
 		JobOfferTTLSeconds:        jobOfferTTLSeconds,
 		DispatchSweepInterval:     time.Duration(dispatchSweepIntervalSeconds) * time.Second,
 		DriverCommissionRate:      driverCommissionRate,
+		PickupETAAvgSpeedKPH:      pickupETAAvgSpeedKPH,
 	}
 
 	if len(cfg.KafkaBrokers) == 0 {
@@ -183,6 +194,9 @@ func Load(ctx context.Context, mode string) (Config, error) {
 	}
 	if cfg.DriverCommissionRate < 0 || cfg.DriverCommissionRate >= 1 {
 		return Config{}, fmt.Errorf("DRIVER_COMMISSION_RATE must be in [0, 1)")
+	}
+	if cfg.PickupETAAvgSpeedKPH <= 0 {
+		return Config{}, fmt.Errorf("PICKUP_ETA_AVERAGE_SPEED_KPH must be greater than zero")
 	}
 
 	return cfg, nil

@@ -7,7 +7,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/segmentio/kafka-go v0.4.47
 	github.com/shawon-kanji/go-ride-db-schema v0.3.6
-	github.com/shawon-kanji/go-ride-utils v0.1.2
+	github.com/shawon-kanji/go-ride-utils v0.1.5
 	gorm.io/driver/postgres v1.6.0
 	gorm.io/gorm v1.31.1
 )
