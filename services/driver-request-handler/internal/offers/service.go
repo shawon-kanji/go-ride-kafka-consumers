@@ -68,6 +68,30 @@ type CurrentTripResult struct {
 	Fare        *schemamodels.TripFare
 }
 
+// TripHistoryRow is the Scan target for ListTrips' raw query — explicit
+// column tags rather than relying on snake_case inference, matching
+// trip-dispatch-worker's own driverCandidate precedent for Raw().Scan().
+// Unlike CurrentTrip, a driver's history is purely ongoing_trips rows
+// (a driver never "has" a trip that wasn't assigned to them), so this
+// needs no trip_requests fallback the way cab-request-handler's rider-side
+// equivalent does.
+type TripHistoryRow struct {
+	OngoingTripID uuid.UUID  `gorm:"column:ongoing_trip_id"`
+	RequestID     uuid.UUID  `gorm:"column:request_id"`
+	TripID        uuid.UUID  `gorm:"column:trip_id"`
+	RiderID       uuid.UUID  `gorm:"column:rider_id"`
+	Status        string     `gorm:"column:status"`
+	PickupLat     float64    `gorm:"column:pickup_lat"`
+	PickupLng     float64    `gorm:"column:pickup_lng"`
+	DropoffLat    float64    `gorm:"column:dropoff_lat"`
+	DropoffLng    float64    `gorm:"column:dropoff_lng"`
+	AssignedAt    time.Time  `gorm:"column:assigned_at"`
+	CompletedAt   *time.Time `gorm:"column:completed_at"`
+	CancelledAt   *time.Time `gorm:"column:cancelled_at"`
+	FinalFare     *float64   `gorm:"column:final_fare"`
+	CurrencyCode  *string    `gorm:"column:currency_code"`
+}
+
 type Service struct {
 	db       *gorm.DB
 	producer kafka.Producer
@@ -870,6 +894,42 @@ var activeOngoingTripStatuses = []string{
 	schemamodels.OngoingTripStatusDriverArriving,
 	schemamodels.OngoingTripStatusInProgress,
 	schemamodels.OngoingTripStatusAwaitingPayment,
+}
+
+var terminalOngoingTripStatuses = []string{
+	schemamodels.OngoingTripStatusCompleted,
+	schemamodels.OngoingTripStatusCancelled,
+}
+
+// ListTrips returns driverID's terminal trips (completed or cancelled)
+// newest first, keyset-paginated on (assigned_at, id) rather than OFFSET so
+// a page boundary never shifts under concurrent inserts.
+func (s *Service) ListTrips(ctx context.Context, driverID uuid.UUID, cursorTime time.Time, cursorID uuid.UUID, hasCursor bool, limit int) ([]TripHistoryRow, error) {
+	query := `
+		SELECT
+			ot.id AS ongoing_trip_id, ot.request_id, ot.trip_id, ot.rider_id,
+			ot.pickup_lat, ot.pickup_lng, ot.dropoff_lat, ot.dropoff_lng,
+			ot.status, ot.assigned_at, ot.completed_at, ot.cancelled_at, ot.final_fare,
+			tf.currency_code
+		FROM ongoing_trips ot
+		LEFT JOIN trip_requests tr ON tr.request_id = ot.request_id
+		LEFT JOIN trip_fares tf ON tf.fare_id = tr.fare_id
+		WHERE ot.driver_id = ?
+		  AND ot.status IN (?)
+	`
+	args := []any{driverID, terminalOngoingTripStatuses}
+	if hasCursor {
+		query += " AND (ot.assigned_at, ot.id) < (?, ?)"
+		args = append(args, cursorTime, cursorID)
+	}
+	query += " ORDER BY ot.assigned_at DESC, ot.id DESC LIMIT ?"
+	args = append(args, limit)
+
+	var rows []TripHistoryRow
+	if err := s.db.WithContext(ctx).Raw(query, args...).Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("query driver trip history driver_id=%s: %w", driverID, err)
+	}
+	return rows, nil
 }
 
 // CurrentTrip lets a driver who force-quit or crashed mid-trip recover which

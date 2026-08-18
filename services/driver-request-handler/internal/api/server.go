@@ -121,6 +121,7 @@ func NewServer(cfg config.Config, verifier *auth.Verifier, offerService *offers.
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET "+apiPrefix+"/healthz", server.handleHealthz)
 	mux.HandleFunc("GET "+apiPrefix+"/current-trip", server.handleCurrentTrip)
+	mux.HandleFunc("GET "+apiPrefix+"/trips", server.handleListTrips)
 	mux.HandleFunc("POST "+apiPrefix+"/job-offers/{job_offer_id}/accept", server.handleAcceptOffer)
 	mux.HandleFunc("POST "+apiPrefix+"/ongoing-trips/{ongoing_trip_id}/start", server.handleStartTrip)
 	mux.HandleFunc("POST "+apiPrefix+"/ongoing-trips/{ongoing_trip_id}/end", server.handleEndTrip)
