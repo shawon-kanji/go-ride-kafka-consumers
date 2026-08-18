@@ -176,6 +176,7 @@ func NewServer(cfg config.Config, verifier *auth.Verifier, db *gorm.DB, producer
 	mux.HandleFunc(cancelRoute, server.handleCancelTripRequest)
 	mux.HandleFunc(currentTripRoute, server.handleCurrentTrip)
 	mux.HandleFunc(fareEstimateRoute, server.handleFareEstimate)
+	mux.HandleFunc(tripsRoute, server.handleListTrips)
 
 	server.http = &http.Server{
 		Addr:              cfg.HTTPAddr,
