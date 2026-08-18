@@ -66,6 +66,13 @@ type acceptOfferResponse struct {
 	OngoingTrip ongoingTripPayload `json:"ongoing_trip"`
 }
 
+type currentTripResponse struct {
+	DriverID       string              `json:"driver_id"`
+	HasOngoingTrip bool                `json:"has_ongoing_trip"`
+	OngoingTrip    *ongoingTripPayload `json:"ongoing_trip,omitempty"`
+	TripRequest    *tripRequestPayload `json:"trip_request,omitempty"`
+}
+
 type endTripResponse struct {
 	OngoingTrip  ongoingTripPayload `json:"ongoing_trip"`
 	CurrencyCode string             `json:"currency_code,omitempty"`
@@ -113,6 +120,7 @@ func NewServer(cfg config.Config, verifier *auth.Verifier, offerService *offers.
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET "+apiPrefix+"/healthz", server.handleHealthz)
+	mux.HandleFunc("GET "+apiPrefix+"/current-trip", server.handleCurrentTrip)
 	mux.HandleFunc("POST "+apiPrefix+"/job-offers/{job_offer_id}/accept", server.handleAcceptOffer)
 	mux.HandleFunc("POST "+apiPrefix+"/ongoing-trips/{ongoing_trip_id}/start", server.handleStartTrip)
 	mux.HandleFunc("POST "+apiPrefix+"/ongoing-trips/{ongoing_trip_id}/end", server.handleEndTrip)
@@ -164,6 +172,60 @@ func (s *Server) Start(ctx context.Context) error {
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleCurrentTrip(w http.ResponseWriter, r *http.Request) {
+	token := bearerToken(r)
+	if token == "" {
+		writeJSONError(w, http.StatusUnauthorized, "unauthorized", "missing bearer token")
+		return
+	}
+
+	claims, err := s.verifier.Parse(token)
+	if err != nil || claims.Role != auth.DriverRole {
+		writeJSONError(w, http.StatusUnauthorized, "unauthorized", "invalid or non-driver token")
+		return
+	}
+
+	driverID, err := uuid.Parse(claims.UserID)
+	if err != nil {
+		writeJSONError(w, http.StatusUnauthorized, "unauthorized", "invalid driver id in token")
+		return
+	}
+
+	result, err := s.offers.CurrentTrip(r.Context(), driverID)
+	if err != nil {
+		log.Printf("current trip driver_id=%s: %v", driverID, err)
+		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to load current trip")
+		return
+	}
+
+	response := currentTripResponse{
+		DriverID:       driverID.String(),
+		HasOngoingTrip: result.OngoingTrip != nil,
+	}
+	if result.OngoingTrip != nil {
+		payload := ongoingTripPayloadFrom(*result.OngoingTrip)
+		response.OngoingTrip = &payload
+	}
+	if result.TripRequest != nil {
+		requestPayload := tripRequestPayload{
+			RequestID:  result.TripRequest.ID.String(),
+			TripID:     result.TripRequest.TripID.String(),
+			Status:     result.TripRequest.Status,
+			PickupLat:  result.TripRequest.PickupLat,
+			PickupLng:  result.TripRequest.PickupLng,
+			DropoffLat: result.TripRequest.DropoffLat,
+			DropoffLng: result.TripRequest.DropoffLng,
+		}
+		if result.Fare != nil {
+			requestPayload.Fare = farePayloadFromFare(result.Fare)
+		}
+		response.TripRequest = &requestPayload
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(response)
 }
 
 func (s *Server) handleAcceptOffer(w http.ResponseWriter, r *http.Request) {

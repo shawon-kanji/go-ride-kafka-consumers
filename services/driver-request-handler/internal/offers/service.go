@@ -62,6 +62,12 @@ type CancelTripResult struct {
 	Redispatch  bool
 }
 
+type CurrentTripResult struct {
+	OngoingTrip *schemamodels.OngoingTrip
+	TripRequest *schemamodels.TripRequest
+	Fare        *schemamodels.TripFare
+}
+
 type Service struct {
 	db       *gorm.DB
 	producer kafka.Producer
@@ -851,6 +857,53 @@ func (s *Service) CancelTrip(ctx context.Context, ongoingTripID, driverID uuid.U
 
 	if err := s.producer.PublishRideCancelled(ctx, event); err != nil {
 		return CancelTripResult{}, fmt.Errorf("publish ride cancelled request_id=%s: %w", event.RequestID, err)
+	}
+
+	return result, nil
+}
+
+// activeOngoingTripStatuses mirrors cab-request-handler's own list (the
+// rider-side equivalent of this recovery endpoint) — every status where a
+// driver still has a trip to act on.
+var activeOngoingTripStatuses = []string{
+	schemamodels.OngoingTripStatusAssigned,
+	schemamodels.OngoingTripStatusDriverArriving,
+	schemamodels.OngoingTripStatusInProgress,
+	schemamodels.OngoingTripStatusAwaitingPayment,
+}
+
+// CurrentTrip lets a driver who force-quit or crashed mid-trip recover which
+// trip they're on, its status, and the rider's fare — the driver-side
+// mirror of cab-request-handler's GET /current-trip. Never errors on
+// "nothing found"; callers check CurrentTripResult.OngoingTrip == nil.
+func (s *Service) CurrentTrip(ctx context.Context, driverID uuid.UUID) (CurrentTripResult, error) {
+	var trip schemamodels.OngoingTrip
+	err := s.db.WithContext(ctx).
+		Where("driver_id = ? AND status IN ?", driverID, activeOngoingTripStatuses).
+		Order("assigned_at DESC").
+		Take(&trip).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return CurrentTripResult{}, nil
+	}
+	if err != nil {
+		return CurrentTripResult{}, fmt.Errorf("query current trip driver_id=%s: %w", driverID, err)
+	}
+
+	var request schemamodels.TripRequest
+	if err := s.db.WithContext(ctx).Where("request_id = ?", trip.RequestID).Take(&request).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return CurrentTripResult{}, fmt.Errorf("load trip request request_id=%s: %w", trip.RequestID, err)
+	} else if errors.Is(err, gorm.ErrRecordNotFound) {
+		return CurrentTripResult{OngoingTrip: &trip}, nil
+	}
+
+	result := CurrentTripResult{OngoingTrip: &trip, TripRequest: &request}
+	if request.FareID != nil {
+		var fare schemamodels.TripFare
+		if err := s.db.WithContext(ctx).Where("fare_id = ?", *request.FareID).Take(&fare).Error; err == nil {
+			result.Fare = &fare
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return CurrentTripResult{}, fmt.Errorf("load trip fare fare_id=%s: %w", request.FareID.String(), err)
+		}
 	}
 
 	return result, nil
