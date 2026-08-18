@@ -345,6 +345,10 @@ func (s *Service) AcceptOffer(ctx context.Context, jobOfferID, driverID uuid.UUI
 	if result.OngoingTrip.StartPin != nil {
 		event.StartPin = *result.OngoingTrip.StartPin
 	}
+	if result.Fare != nil {
+		event.RouteDistanceKM = result.Fare.RouteDistanceKM
+		event.RouteDurationMinutes = result.Fare.RouteDurationMinutes
+	}
 	if result.Vehicle != nil {
 		event.VehicleColor = result.Vehicle.Color
 		event.VehiclePlate = result.Vehicle.PlateNumber

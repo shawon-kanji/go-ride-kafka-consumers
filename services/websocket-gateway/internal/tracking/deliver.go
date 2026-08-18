@@ -42,13 +42,15 @@ func (d *Deliverer) HandleBroadcast(ctx context.Context, payload []byte) {
 	}
 
 	message := ws.NewDriverLocationMessage(ws.DriverLocationParams{
-		TripID:        broadcast.TripID,
-		OngoingTripID: broadcast.OngoingTripID,
-		DriverID:      broadcast.DriverID,
-		Latitude:      broadcast.Latitude,
-		Longitude:     broadcast.Longitude,
-		AccuracyM:     broadcast.AccuracyM,
-		EventTime:     broadcast.EventTime,
+		TripID:              broadcast.TripID,
+		OngoingTripID:       broadcast.OngoingTripID,
+		DriverID:            broadcast.DriverID,
+		Latitude:            broadcast.Latitude,
+		Longitude:           broadcast.Longitude,
+		AccuracyM:           broadcast.AccuracyM,
+		EventTime:           broadcast.EventTime,
+		DistanceRemainingKM: broadcast.DistanceRemainingKM,
+		EtaMinutes:          broadcast.EtaMinutes,
 	})
 
 	payloadOut, err := json.Marshal(message)

@@ -61,6 +61,12 @@ type Config struct {
 	// estimated_earning that the live push already carried on the
 	// (denormalized) Kafka event.
 	DriverCommissionRate float64
+
+	// FallbackAvgSpeedKPH backs the live ETA on driver_location pushes when
+	// a trip's fare had no real route (cab-request-handler's directions
+	// provider was unavailable at estimate time) — same default as that
+	// service's own FARE_AVERAGE_SPEED_KPH fallback, kept in sync manually.
+	FallbackAvgSpeedKPH float64
 }
 
 type DBConfig struct {
@@ -134,6 +140,11 @@ func Load(ctx context.Context) (Config, error) {
 		return Config{}, fmt.Errorf("invalid ACTIVE_TRIP_TTL_SECONDS: %w", err)
 	}
 
+	fallbackAvgSpeedKPH, err := getFloatEnv("FALLBACK_AVG_SPEED_KPH", 30)
+	if err != nil {
+		return Config{}, fmt.Errorf("invalid FALLBACK_AVG_SPEED_KPH: %w", err)
+	}
+
 	cfg := Config{
 		ServiceName: getEnv("SERVICE_NAME", "websocket-gateway"),
 		HTTPAddr:    getEnv("HTTP_ADDR", ":8083"),
@@ -179,6 +190,8 @@ func Load(ctx context.Context) (Config, error) {
 		ReplayBatch:  replayBatch,
 
 		DriverCommissionRate: driverCommissionRate,
+
+		FallbackAvgSpeedKPH: fallbackAvgSpeedKPH,
 	}
 
 	if len(cfg.KafkaBrokers) == 0 {
@@ -234,6 +247,9 @@ func Load(ctx context.Context) (Config, error) {
 	}
 	if cfg.ActiveTripTTL <= 0 {
 		return Config{}, fmt.Errorf("ACTIVE_TRIP_TTL_SECONDS must be greater than zero")
+	}
+	if cfg.FallbackAvgSpeedKPH <= 0 {
+		return Config{}, fmt.Errorf("FALLBACK_AVG_SPEED_KPH must be greater than zero")
 	}
 
 	return cfg, nil

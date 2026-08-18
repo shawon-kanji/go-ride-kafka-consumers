@@ -16,4 +16,10 @@ type LocationBroadcast struct {
 	Longitude     float64   `json:"longitude"`
 	AccuracyM     float64   `json:"accuracy_m,omitempty"`
 	EventTime     time.Time `json:"event_time"`
+	// DistanceRemainingKM/EtaMinutes are straight-line-to-pickup, not a
+	// re-routed real distance — recomputed on every ping via haversine
+	// against ActiveTrip.PickupLat/PickupLng and a per-trip average speed,
+	// not a Directions API call per ping (cost/rate-limit reasons).
+	DistanceRemainingKM float64 `json:"distance_remaining_km"`
+	EtaMinutes          float64 `json:"eta_minutes"`
 }

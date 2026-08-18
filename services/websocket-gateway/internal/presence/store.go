@@ -19,6 +19,14 @@ type ActiveTrip struct {
 	TripID        string `json:"trip_id"`
 	OngoingTripID string `json:"ongoing_trip_id"`
 	RequestID     string `json:"request_id"`
+	// PickupLat/PickupLng and AvgSpeedKPH let the location pipeline derive
+	// a live ETA on every ping without a DB round-trip per ping — AvgSpeedKPH
+	// is nil when the fare had no real route (directions provider
+	// unavailable at estimate time), in which case the tracking package
+	// falls back to its own configured average speed.
+	PickupLat   float64  `json:"pickup_lat"`
+	PickupLng   float64  `json:"pickup_lng"`
+	AvgSpeedKPH *float64 `json:"avg_speed_kph,omitempty"`
 }
 
 // Store is the KV counterpart to Bus: same Redis server, but a distinct

@@ -157,30 +157,38 @@ type DriverLocationMessage struct {
 	Longitude     float64   `json:"longitude"`
 	AccuracyM     float64   `json:"accuracy_m,omitempty"`
 	EventTime     time.Time `json:"event_time"`
-	SentAt        time.Time `json:"sent_at"`
+	// DistanceRemainingKM/EtaMinutes are straight-line-to-pickup, recomputed
+	// on every ping — not a re-routed real distance/duration.
+	DistanceRemainingKM float64   `json:"distance_remaining_km"`
+	EtaMinutes          float64   `json:"eta_minutes"`
+	SentAt              time.Time `json:"sent_at"`
 }
 
 type DriverLocationParams struct {
-	TripID        string
-	OngoingTripID string
-	DriverID      string
-	Latitude      float64
-	Longitude     float64
-	AccuracyM     float64
-	EventTime     time.Time
+	TripID              string
+	OngoingTripID       string
+	DriverID            string
+	Latitude            float64
+	Longitude           float64
+	AccuracyM           float64
+	EventTime           time.Time
+	DistanceRemainingKM float64
+	EtaMinutes          float64
 }
 
 func NewDriverLocationMessage(p DriverLocationParams) DriverLocationMessage {
 	return DriverLocationMessage{
-		Type:          "driver_location",
-		TripID:        p.TripID,
-		OngoingTripID: p.OngoingTripID,
-		DriverID:      p.DriverID,
-		Latitude:      p.Latitude,
-		Longitude:     p.Longitude,
-		AccuracyM:     p.AccuracyM,
-		EventTime:     p.EventTime,
-		SentAt:        time.Now().UTC(),
+		Type:                "driver_location",
+		TripID:              p.TripID,
+		OngoingTripID:       p.OngoingTripID,
+		DriverID:            p.DriverID,
+		Latitude:            p.Latitude,
+		Longitude:           p.Longitude,
+		AccuracyM:           p.AccuracyM,
+		EventTime:           p.EventTime,
+		DistanceRemainingKM: p.DistanceRemainingKM,
+		EtaMinutes:          p.EtaMinutes,
+		SentAt:              time.Now().UTC(),
 	}
 }
 

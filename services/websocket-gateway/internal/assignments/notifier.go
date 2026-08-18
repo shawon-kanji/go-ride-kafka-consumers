@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"log"
 
-	"go-ride-kafka-consumers/services/websocket-gateway/internal/presence"
 	"github.com/shawon-kanji/go-ride-utils/events"
+	"go-ride-kafka-consumers/services/websocket-gateway/internal/presence"
 )
 
 // Notifier broadcasts a RideAssignedV1 event to Redis so every gateway
@@ -32,6 +32,9 @@ func (n *Notifier) HandleRideAssignedEvent(ctx context.Context, event events.Rid
 		TripID:        event.TripID,
 		OngoingTripID: event.OngoingTripID,
 		RequestID:     event.RequestID,
+		PickupLat:     event.PickupLat,
+		PickupLng:     event.PickupLng,
+		AvgSpeedKPH:   avgSpeedKPH(event.RouteDistanceKM, event.RouteDurationMinutes),
 	}); err != nil {
 		log.Printf("websocket_gateway: set active trip failed driver_id=%s request_id=%s: %v", event.DriverID, event.RequestID, err)
 	}
@@ -45,4 +48,16 @@ func (n *Notifier) HandleRideAssignedEvent(ctx context.Context, event events.Rid
 		return fmt.Errorf("publish ride assigned event request_id=%s: %w", event.RequestID, err)
 	}
 	return nil
+}
+
+// avgSpeedKPH derives a per-trip average speed from the fare's real route,
+// nil when either input is nil (no route) or duration is non-positive
+// (would divide by zero) — the tracking package's own configured fallback
+// speed covers both cases.
+func avgSpeedKPH(distanceKM, durationMinutes *float64) *float64 {
+	if distanceKM == nil || durationMinutes == nil || *durationMinutes <= 0 {
+		return nil
+	}
+	speed := *distanceKM / (*durationMinutes / 60)
+	return &speed
 }

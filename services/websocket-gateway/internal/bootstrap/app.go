@@ -82,7 +82,7 @@ func New(ctx context.Context) (*App, error) {
 
 	locationDeliverer := tracking.NewDeliverer(riderHub)
 	locationBus := presence.NewBus(cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB, cfg.RedisLocationChannel)
-	locationNotifier := tracking.NewNotifier(locationStore, locationBus)
+	locationNotifier := tracking.NewNotifier(locationStore, locationBus, cfg.FallbackAvgSpeedKPH)
 	locationConsumer := kafka.NewLocationConsumer(cfg, locationNotifier)
 
 	tripStartedDeliverer := tripstart.NewDeliverer(riderHub)
