@@ -13,13 +13,18 @@ import (
 )
 
 type Config struct {
-	ServiceName            string
-	HTTPAddr               string
-	DB                     DBConfig
-	KafkaBrokers           []string
-	KafkaTopic             string
-	CancelledTopic         string
-	DefaultSearchRadiusKM  float64
+	ServiceName           string
+	HTTPAddr              string
+	DB                    DBConfig
+	KafkaBrokers          []string
+	KafkaTopic            string
+	CancelledTopic        string
+	DefaultSearchRadiusKM float64
+	// FareCityCode selects the fare_configs row set to price against
+	// (city_code + service_type + is_active + effective window + highest
+	// priority). This platform is single-market for now, so it's a fixed
+	// config value rather than derived from the pickup location.
+	FareCityCode           string
 	FareCurrencyCode       string
 	FarePricingVersion     string
 	FareBaseAmount         float64
@@ -125,6 +130,7 @@ func Load(ctx context.Context) (Config, error) {
 		KafkaTopic:            getEnv("KAFKA_TOPIC", kafkatopics.RideRequestedV1),
 		CancelledTopic:        getEnv("KAFKA_CANCELLED_TOPIC", kafkatopics.RideCancelledV1),
 		DefaultSearchRadiusKM: defaultSearchRadiusKM,
+		FareCityCode:          getEnv("FARE_CITY_CODE", "DEFAULT"),
 		FareCurrencyCode:      getEnv("FARE_CURRENCY_CODE", "USD"),
 		FarePricingVersion:    getEnv("FARE_PRICING_VERSION", "v1"),
 		FareBaseAmount:        fareBaseAmount,
@@ -152,6 +158,9 @@ func Load(ctx context.Context) (Config, error) {
 	}
 	if cfg.HTTPAddr == "" {
 		return Config{}, fmt.Errorf("HTTP_ADDR is required")
+	}
+	if cfg.FareCityCode == "" {
+		return Config{}, fmt.Errorf("FARE_CITY_CODE is required")
 	}
 	if cfg.FareCurrencyCode == "" {
 		return Config{}, fmt.Errorf("FARE_CURRENCY_CODE is required")

@@ -69,8 +69,13 @@ type fareEstimateRequest struct {
 	SearchRadiusKM float64 `json:"search_radius_km,omitempty"`
 }
 
-type fareEstimateResponse struct {
+// fareQuote is one tier's price within a fareEstimateResponse -- R03 shows
+// all three tiers (Standard/Standard 6 Seater/Standard Plus) at once from a
+// single estimate action, so /fare-estimate returns an array rather than
+// one fare.
+type fareQuote struct {
 	FareID               string    `json:"fare_id"`
+	ServiceType          string    `json:"service_type"`
 	CurrencyCode         string    `json:"currency_code"`
 	BaseFare             float64   `json:"base_fare"`
 	DistanceFare         float64   `json:"distance_fare"`
@@ -85,6 +90,10 @@ type fareEstimateResponse struct {
 	RoutePolyline        *string   `json:"route_polyline,omitempty"`
 	LockedAt             time.Time `json:"locked_at"`
 	ExpiresAt            time.Time `json:"expires_at,omitempty"`
+}
+
+type fareEstimateResponse struct {
+	Quotes []fareQuote `json:"quotes"`
 }
 
 type errorResponse struct {
@@ -352,37 +361,55 @@ func (s *Server) handleFareEstimate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := time.Now().UTC()
-	fare := s.buildFareEstimate(r.Context(), riderID, req, now)
-	if err := s.db.WithContext(r.Context()).Create(&fare).Error; err != nil {
-		log.Printf("persist fare estimate rider_id=%s: %v", riderID, err)
+	quotes := s.buildFareEstimate(r.Context(), riderID, req, now)
+	if len(quotes) == 0 {
+		log.Printf("fare estimate produced no quotes rider_id=%s city=%s", riderID, s.cfg.FareCityCode)
+		http.Error(w, "no fare quotes available", http.StatusServiceUnavailable)
+		return
+	}
+
+	if err := s.db.WithContext(r.Context()).Transaction(func(tx *gorm.DB) error {
+		for i := range quotes {
+			if err := tx.Create(&quotes[i]).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		log.Printf("persist fare estimate quotes rider_id=%s: %v", riderID, err)
 		http.Error(w, "failed to create fare estimate", http.StatusInternalServerError)
 		return
 	}
 
-	response := fareEstimateResponse{
-		FareID:               fare.ID.String(),
-		CurrencyCode:         fare.CurrencyCode,
-		BaseFare:             fare.BaseFare,
-		DistanceFare:         fare.DistanceFare,
-		TimeFare:             fare.TimeFare,
-		SurchargeTotal:       fare.SurchargeTotal,
-		DiscountTotal:        fare.DiscountTotal,
-		SurgeMultiplier:      fare.SurgeMultiplier,
-		TotalFare:            fare.TotalFare,
-		PricingVersion:       fare.PricingVersion,
-		RouteDistanceKM:      fare.RouteDistanceKM,
-		RouteDurationMinutes: fare.RouteDurationMinutes,
-		RoutePolyline:        fare.RoutePolyline,
-		LockedAt:             fare.LockedAt,
-	}
-	if fare.ExpiresAt != nil {
-		response.ExpiresAt = *fare.ExpiresAt
+	response := fareEstimateResponse{Quotes: make([]fareQuote, 0, len(quotes))}
+	for _, fare := range quotes {
+		quote := fareQuote{
+			FareID:               fare.ID.String(),
+			ServiceType:          fare.ServiceType,
+			CurrencyCode:         fare.CurrencyCode,
+			BaseFare:             fare.BaseFare,
+			DistanceFare:         fare.DistanceFare,
+			TimeFare:             fare.TimeFare,
+			SurchargeTotal:       fare.SurchargeTotal,
+			DiscountTotal:        fare.DiscountTotal,
+			SurgeMultiplier:      fare.SurgeMultiplier,
+			TotalFare:            fare.TotalFare,
+			PricingVersion:       fare.PricingVersion,
+			RouteDistanceKM:      fare.RouteDistanceKM,
+			RouteDurationMinutes: fare.RouteDurationMinutes,
+			RoutePolyline:        fare.RoutePolyline,
+			LockedAt:             fare.LockedAt,
+		}
+		if fare.ExpiresAt != nil {
+			quote.ExpiresAt = *fare.ExpiresAt
+		}
+		response.Quotes = append(response.Quotes, quote)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(response)
-	log.Printf("created fare estimate fare_id=%s rider_id=%s", response.FareID, riderID)
+	log.Printf("created fare estimate quote_count=%d rider_id=%s", len(response.Quotes), riderID)
 }
 
 func (s *Server) handleCurrentTrip(w http.ResponseWriter, r *http.Request) {
@@ -572,6 +599,7 @@ func (s *Server) createOrLoadCabRequest(ctx context.Context, riderID uuid.UUID, 
 			TripID:          uuid.New(),
 			RiderID:         riderID,
 			FareID:          &fareID,
+			ServiceType:     fare.ServiceType,
 			Status:          requestStatusSearchStarted,
 			PickupLat:       fare.PickupLat,
 			PickupLng:       fare.PickupLng,
@@ -631,7 +659,14 @@ func (s *Server) createOrLoadCabRequest(ctx context.Context, riderID uuid.UUID, 
 // shouldn't block booking. Route* fields on the returned TripFare stay nil
 // in the fallback case, which is how callers tell the two apart (no
 // polyline to draw, no real duration to trust).
-func (s *Server) buildFareEstimate(ctx context.Context, riderID uuid.UUID, req fareEstimateRequest, now time.Time) schemamodels.TripFare {
+// buildFareEstimate computes route distance/duration once -- the trip
+// itself doesn't change based on which tier the rider eventually picks --
+// and returns one locked trip_fares row per tier priced against it (B1).
+// A non-base tier with no matching fare_configs row is silently omitted
+// (better to offer fewer options than fabricate a price); RIDE instead
+// falls back to the legacy flat env-var pricing so a fresh environment that
+// hasn't run the fare-config seeder yet still returns at least one quote.
+func (s *Server) buildFareEstimate(ctx context.Context, riderID uuid.UUID, req fareEstimateRequest, now time.Time) []schemamodels.TripFare {
 	distanceKM := haversineKM(req.PickupLat, req.PickupLng, req.DropoffLat, req.DropoffLng)
 	estimatedMinutes := 0.0
 	if s.cfg.FareAverageSpeedKPH > 0 {
@@ -653,46 +688,98 @@ func (s *Server) buildFareEstimate(ctx context.Context, riderID uuid.UUID, req f
 		}
 	}
 
-	baseFare := roundMoney(s.cfg.FareBaseAmount)
-	distanceFare := roundMoney(distanceKM * s.cfg.FarePerKmAmount)
-	timeFare := roundMoney(estimatedMinutes * s.cfg.FarePerMinuteAmount)
-	surchargeTotal := 0.0
-	discountTotal := 0.0
-	surgeMultiplier := 1.0
-	totalFare := roundMoney(baseFare + distanceFare + timeFare)
-	if totalFare < s.cfg.FareMinimumAmount {
-		totalFare = roundMoney(s.cfg.FareMinimumAmount)
-	}
-
+	pickupGeohash := geohashFromLatLng(req.PickupLat, req.PickupLng)
+	pickupS2CellID := s2CellIDFromLatLng(req.PickupLat, req.PickupLng)
 	expiresAt := now.Add(s.cfg.FareLockTTL)
 
-	return schemamodels.TripFare{
-		ID:                   uuid.New(),
-		RiderID:              riderID,
-		PickupLat:            req.PickupLat,
-		PickupLng:            req.PickupLng,
-		DropoffLat:           req.DropoffLat,
-		DropoffLng:           req.DropoffLng,
-		PickupGeohash:        geohashFromLatLng(req.PickupLat, req.PickupLng),
-		PickupS2CellID:       s2CellIDFromLatLng(req.PickupLat, req.PickupLng),
-		SearchRadiusKM:       req.SearchRadiusKM,
-		CurrencyCode:         s.cfg.FareCurrencyCode,
-		BaseFare:             baseFare,
-		DistanceFare:         distanceFare,
-		TimeFare:             timeFare,
-		SurchargeTotal:       surchargeTotal,
-		DiscountTotal:        discountTotal,
-		SurgeMultiplier:      surgeMultiplier,
-		TotalFare:            totalFare,
-		PricingVersion:       s.cfg.FarePricingVersion,
-		RouteDistanceKM:      routeDistanceKM,
-		RouteDurationMinutes: routeDurationMinutes,
-		RoutePolyline:        routePolyline,
-		LockedAt:             now,
-		ExpiresAt:            &expiresAt,
-		CreatedAt:            now,
-		UpdatedAt:            now,
+	serviceTypes := schemamodels.ValidServiceTypes()
+	quotes := make([]schemamodels.TripFare, 0, len(serviceTypes))
+	for _, serviceType := range serviceTypes {
+		fareCfg, err := s.lookupFareConfig(ctx, serviceType, now)
+		if err != nil {
+			log.Printf("fare config lookup failed city=%s service_type=%s: %v", s.cfg.FareCityCode, serviceType, err)
+			continue
+		}
+
+		var currencyCode string
+		var baseFare, distanceFare, timeFare, totalFare float64
+		switch {
+		case fareCfg != nil:
+			currencyCode = fareCfg.CurrencyCode
+			baseFare = roundMoney(fareCfg.BaseFare)
+			distanceFare = roundMoney(distanceKM * fareCfg.PerKMRate)
+			timeFare = roundMoney(estimatedMinutes * fareCfg.PerMinuteRate)
+			totalFare = roundMoney(baseFare + distanceFare + timeFare)
+			if totalFare < fareCfg.MinimumFare {
+				totalFare = roundMoney(fareCfg.MinimumFare)
+			}
+		case serviceType == schemamodels.ServiceTypeRide:
+			currencyCode = s.cfg.FareCurrencyCode
+			baseFare = roundMoney(s.cfg.FareBaseAmount)
+			distanceFare = roundMoney(distanceKM * s.cfg.FarePerKmAmount)
+			timeFare = roundMoney(estimatedMinutes * s.cfg.FarePerMinuteAmount)
+			totalFare = roundMoney(baseFare + distanceFare + timeFare)
+			if totalFare < s.cfg.FareMinimumAmount {
+				totalFare = roundMoney(s.cfg.FareMinimumAmount)
+			}
+		default:
+			continue
+		}
+
+		quotes = append(quotes, schemamodels.TripFare{
+			ID:                   uuid.New(),
+			RiderID:              riderID,
+			ServiceType:          serviceType,
+			PickupLat:            req.PickupLat,
+			PickupLng:            req.PickupLng,
+			DropoffLat:           req.DropoffLat,
+			DropoffLng:           req.DropoffLng,
+			PickupGeohash:        pickupGeohash,
+			PickupS2CellID:       pickupS2CellID,
+			SearchRadiusKM:       req.SearchRadiusKM,
+			CurrencyCode:         currencyCode,
+			BaseFare:             baseFare,
+			DistanceFare:         distanceFare,
+			TimeFare:             timeFare,
+			SurchargeTotal:       0,
+			DiscountTotal:        0,
+			SurgeMultiplier:      1,
+			TotalFare:            totalFare,
+			PricingVersion:       s.cfg.FarePricingVersion,
+			RouteDistanceKM:      routeDistanceKM,
+			RouteDurationMinutes: routeDurationMinutes,
+			RoutePolyline:        routePolyline,
+			LockedAt:             now,
+			ExpiresAt:            &expiresAt,
+			CreatedAt:            now,
+			UpdatedAt:            now,
+		})
 	}
+
+	return quotes
+}
+
+// lookupFareConfig returns the highest-priority active fare_configs row for
+// FareCityCode/serviceType whose effective window covers now, or nil if
+// none matches. Higher Priority wins on overlap -- this repo's fare_configs
+// seed uses 100 for live rows and 90 for a deprecated legacy one, so
+// "higher number wins" is the convention this establishes (the column was
+// otherwise unused before B1, so nothing else depends on the opposite).
+func (s *Server) lookupFareConfig(ctx context.Context, serviceType string, now time.Time) (*schemamodels.FareConfig, error) {
+	var cfg schemamodels.FareConfig
+	err := s.db.WithContext(ctx).
+		Where("city_code = ? AND service_type = ? AND is_active = true", s.cfg.FareCityCode, serviceType).
+		Where("effective_from <= ?", now).
+		Where("effective_to IS NULL OR effective_to > ?", now).
+		Order("priority DESC").
+		Take(&cfg).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("lookup fare config city=%s service_type=%s: %w", s.cfg.FareCityCode, serviceType, err)
+	}
+	return &cfg, nil
 }
 
 func (s *Server) newRideRequestedEvent(bundle requestBundle, requestedAt, now time.Time) events.RideRequestedV1 {
