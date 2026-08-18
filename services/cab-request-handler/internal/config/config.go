@@ -13,24 +13,25 @@ import (
 )
 
 type Config struct {
-	ServiceName           string
-	HTTPAddr              string
-	DB                    DBConfig
-	KafkaBrokers          []string
-	KafkaTopic            string
-	CancelledTopic        string
-	DefaultSearchRadiusKM float64
-	FareCurrencyCode      string
-	FarePricingVersion    string
-	FareBaseAmount        float64
-	FarePerKmAmount       float64
-	FarePerMinuteAmount   float64
-	FareMinimumAmount     float64
-	FareAverageSpeedKPH   float64
-	FareLockTTL           time.Duration
-	JWTSecret             string
-	JWTIssuer             string
-	JWTAudience           string
+	ServiceName            string
+	HTTPAddr               string
+	DB                     DBConfig
+	KafkaBrokers           []string
+	KafkaTopic             string
+	CancelledTopic         string
+	DefaultSearchRadiusKM  float64
+	FareCurrencyCode       string
+	FarePricingVersion     string
+	FareBaseAmount         float64
+	FarePerKmAmount        float64
+	FarePerMinuteAmount    float64
+	FareMinimumAmount      float64
+	FareAverageSpeedKPH    float64
+	FareLockTTL            time.Duration
+	JWTSecret              string
+	JWTIssuer              string
+	JWTAudience            string
+	GoogleMapsServerAPIKey string
 }
 
 type DBConfig struct {
@@ -135,6 +136,9 @@ func Load(ctx context.Context) (Config, error) {
 		JWTSecret:             jwtSecret,
 		JWTIssuer:             getEnv("JWT_ISSUER", "go-ride-backend"),
 		JWTAudience:           getEnv("JWT_AUDIENCE", "go-ride-clients"),
+		// Optional: unset falls back to the haversine + configured average
+		// speed estimate below rather than failing fare-estimate outright.
+		GoogleMapsServerAPIKey: getEnv("GOOGLE_MAPS_SERVER_API_KEY", ""),
 	}
 
 	if len(cfg.KafkaBrokers) == 0 {

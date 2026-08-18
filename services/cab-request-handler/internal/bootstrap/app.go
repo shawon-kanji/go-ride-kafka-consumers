@@ -10,6 +10,7 @@ import (
 	"go-ride-kafka-consumers/services/cab-request-handler/internal/auth"
 	"go-ride-kafka-consumers/services/cab-request-handler/internal/config"
 	"go-ride-kafka-consumers/services/cab-request-handler/internal/db"
+	"go-ride-kafka-consumers/services/cab-request-handler/internal/directions"
 	"go-ride-kafka-consumers/services/cab-request-handler/internal/kafka"
 )
 
@@ -38,7 +39,8 @@ func New(ctx context.Context) (*App, error) {
 
 	verifier := auth.NewVerifier(cfg.JWTSecret, cfg.JWTIssuer, cfg.JWTAudience)
 	producer := kafka.NewRideRequestProducer(cfg)
-	server := api.NewServer(cfg, verifier, gormDB, producer)
+	directionsClient := directions.NewGoogleClient(cfg.GoogleMapsServerAPIKey)
+	server := api.NewServer(cfg, verifier, gormDB, producer, directionsClient)
 
 	return &App{
 		cfg:      cfg,

@@ -13,6 +13,7 @@ import (
 
 	"go-ride-kafka-consumers/services/cab-request-handler/internal/auth"
 	"go-ride-kafka-consumers/services/cab-request-handler/internal/config"
+	"go-ride-kafka-consumers/services/cab-request-handler/internal/directions"
 	"go-ride-kafka-consumers/services/cab-request-handler/internal/kafka"
 
 	"github.com/google/uuid"
@@ -45,11 +46,12 @@ var (
 )
 
 type Server struct {
-	cfg      config.Config
-	verifier *auth.Verifier
-	db       *gorm.DB
-	producer kafka.Producer
-	http     *http.Server
+	cfg        config.Config
+	verifier   *auth.Verifier
+	db         *gorm.DB
+	producer   kafka.Producer
+	directions directions.Client
+	http       *http.Server
 }
 
 type createCabRequestRequest struct {
@@ -68,18 +70,21 @@ type fareEstimateRequest struct {
 }
 
 type fareEstimateResponse struct {
-	FareID          string    `json:"fare_id"`
-	CurrencyCode    string    `json:"currency_code"`
-	BaseFare        float64   `json:"base_fare"`
-	DistanceFare    float64   `json:"distance_fare"`
-	TimeFare        float64   `json:"time_fare"`
-	SurchargeTotal  float64   `json:"surcharge_total"`
-	DiscountTotal   float64   `json:"discount_total"`
-	SurgeMultiplier float64   `json:"surge_multiplier"`
-	TotalFare       float64   `json:"total_fare"`
-	PricingVersion  string    `json:"pricing_version"`
-	LockedAt        time.Time `json:"locked_at"`
-	ExpiresAt       time.Time `json:"expires_at,omitempty"`
+	FareID               string    `json:"fare_id"`
+	CurrencyCode         string    `json:"currency_code"`
+	BaseFare             float64   `json:"base_fare"`
+	DistanceFare         float64   `json:"distance_fare"`
+	TimeFare             float64   `json:"time_fare"`
+	SurchargeTotal       float64   `json:"surcharge_total"`
+	DiscountTotal        float64   `json:"discount_total"`
+	SurgeMultiplier      float64   `json:"surge_multiplier"`
+	TotalFare            float64   `json:"total_fare"`
+	PricingVersion       string    `json:"pricing_version"`
+	RouteDistanceKM      *float64  `json:"route_distance_km,omitempty"`
+	RouteDurationMinutes *float64  `json:"route_duration_minutes,omitempty"`
+	RoutePolyline        *string   `json:"route_polyline,omitempty"`
+	LockedAt             time.Time `json:"locked_at"`
+	ExpiresAt            time.Time `json:"expires_at,omitempty"`
 }
 
 type errorResponse struct {
@@ -127,18 +132,21 @@ type tripRequestPayload struct {
 }
 
 type farePayload struct {
-	FareID          string     `json:"fare_id"`
-	CurrencyCode    string     `json:"currency_code"`
-	BaseFare        float64    `json:"base_fare"`
-	DistanceFare    float64    `json:"distance_fare"`
-	TimeFare        float64    `json:"time_fare"`
-	SurchargeTotal  float64    `json:"surcharge_total"`
-	DiscountTotal   float64    `json:"discount_total"`
-	SurgeMultiplier float64    `json:"surge_multiplier"`
-	TotalFare       float64    `json:"total_fare"`
-	PricingVersion  string     `json:"pricing_version"`
-	LockedAt        time.Time  `json:"locked_at"`
-	ExpiresAt       *time.Time `json:"expires_at,omitempty"`
+	FareID               string     `json:"fare_id"`
+	CurrencyCode         string     `json:"currency_code"`
+	BaseFare             float64    `json:"base_fare"`
+	DistanceFare         float64    `json:"distance_fare"`
+	TimeFare             float64    `json:"time_fare"`
+	SurchargeTotal       float64    `json:"surcharge_total"`
+	DiscountTotal        float64    `json:"discount_total"`
+	SurgeMultiplier      float64    `json:"surge_multiplier"`
+	TotalFare            float64    `json:"total_fare"`
+	PricingVersion       string     `json:"pricing_version"`
+	RouteDistanceKM      *float64   `json:"route_distance_km,omitempty"`
+	RouteDurationMinutes *float64   `json:"route_duration_minutes,omitempty"`
+	RoutePolyline        *string    `json:"route_polyline,omitempty"`
+	LockedAt             time.Time  `json:"locked_at"`
+	ExpiresAt            *time.Time `json:"expires_at,omitempty"`
 }
 
 type ongoingTripPayload struct {
@@ -162,12 +170,13 @@ type ongoingTripPayload struct {
 	PaymentCollectedAt *time.Time `json:"payment_collected_at,omitempty"`
 }
 
-func NewServer(cfg config.Config, verifier *auth.Verifier, db *gorm.DB, producer kafka.Producer) *Server {
+func NewServer(cfg config.Config, verifier *auth.Verifier, db *gorm.DB, producer kafka.Producer, directionsClient directions.Client) *Server {
 	server := &Server{
-		cfg:      cfg,
-		verifier: verifier,
-		db:       db,
-		producer: producer,
+		cfg:        cfg,
+		verifier:   verifier,
+		db:         db,
+		producer:   producer,
+		directions: directionsClient,
 	}
 
 	mux := http.NewServeMux()
@@ -342,7 +351,7 @@ func (s *Server) handleFareEstimate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := time.Now().UTC()
-	fare := s.buildFareEstimate(riderID, req, now)
+	fare := s.buildFareEstimate(r.Context(), riderID, req, now)
 	if err := s.db.WithContext(r.Context()).Create(&fare).Error; err != nil {
 		log.Printf("persist fare estimate rider_id=%s: %v", riderID, err)
 		http.Error(w, "failed to create fare estimate", http.StatusInternalServerError)
@@ -350,17 +359,20 @@ func (s *Server) handleFareEstimate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := fareEstimateResponse{
-		FareID:          fare.ID.String(),
-		CurrencyCode:    fare.CurrencyCode,
-		BaseFare:        fare.BaseFare,
-		DistanceFare:    fare.DistanceFare,
-		TimeFare:        fare.TimeFare,
-		SurchargeTotal:  fare.SurchargeTotal,
-		DiscountTotal:   fare.DiscountTotal,
-		SurgeMultiplier: fare.SurgeMultiplier,
-		TotalFare:       fare.TotalFare,
-		PricingVersion:  fare.PricingVersion,
-		LockedAt:        fare.LockedAt,
+		FareID:               fare.ID.String(),
+		CurrencyCode:         fare.CurrencyCode,
+		BaseFare:             fare.BaseFare,
+		DistanceFare:         fare.DistanceFare,
+		TimeFare:             fare.TimeFare,
+		SurchargeTotal:       fare.SurchargeTotal,
+		DiscountTotal:        fare.DiscountTotal,
+		SurgeMultiplier:      fare.SurgeMultiplier,
+		TotalFare:            fare.TotalFare,
+		PricingVersion:       fare.PricingVersion,
+		RouteDistanceKM:      fare.RouteDistanceKM,
+		RouteDurationMinutes: fare.RouteDurationMinutes,
+		RoutePolyline:        fare.RoutePolyline,
+		LockedAt:             fare.LockedAt,
 	}
 	if fare.ExpiresAt != nil {
 		response.ExpiresAt = *fare.ExpiresAt
@@ -418,18 +430,21 @@ func (s *Server) handleCurrentTrip(w http.ResponseWriter, r *http.Request) {
 		}
 		if fare != nil {
 			requestPayload.Fare = &farePayload{
-				FareID:          fare.ID.String(),
-				CurrencyCode:    fare.CurrencyCode,
-				BaseFare:        fare.BaseFare,
-				DistanceFare:    fare.DistanceFare,
-				TimeFare:        fare.TimeFare,
-				SurchargeTotal:  fare.SurchargeTotal,
-				DiscountTotal:   fare.DiscountTotal,
-				SurgeMultiplier: fare.SurgeMultiplier,
-				TotalFare:       fare.TotalFare,
-				PricingVersion:  fare.PricingVersion,
-				LockedAt:        fare.LockedAt,
-				ExpiresAt:       fare.ExpiresAt,
+				FareID:               fare.ID.String(),
+				CurrencyCode:         fare.CurrencyCode,
+				BaseFare:             fare.BaseFare,
+				DistanceFare:         fare.DistanceFare,
+				TimeFare:             fare.TimeFare,
+				SurchargeTotal:       fare.SurchargeTotal,
+				DiscountTotal:        fare.DiscountTotal,
+				SurgeMultiplier:      fare.SurgeMultiplier,
+				TotalFare:            fare.TotalFare,
+				PricingVersion:       fare.PricingVersion,
+				RouteDistanceKM:      fare.RouteDistanceKM,
+				RouteDurationMinutes: fare.RouteDurationMinutes,
+				RoutePolyline:        fare.RoutePolyline,
+				LockedAt:             fare.LockedAt,
+				ExpiresAt:            fare.ExpiresAt,
 			}
 		}
 		response.TripRequest = requestPayload
@@ -608,11 +623,33 @@ func (s *Server) createOrLoadCabRequest(ctx context.Context, riderID uuid.UUID, 
 	return bundle, nil
 }
 
-func (s *Server) buildFareEstimate(riderID uuid.UUID, req fareEstimateRequest, now time.Time) schemamodels.TripFare {
+// buildFareEstimate prefers a real driving route from s.directions; when
+// that's unset (no API key configured) or the call fails (rate limit, no
+// route found, network error), it falls back to the haversine straight-line
+// estimate that was previously the only option — a Maps API hiccup
+// shouldn't block booking. Route* fields on the returned TripFare stay nil
+// in the fallback case, which is how callers tell the two apart (no
+// polyline to draw, no real duration to trust).
+func (s *Server) buildFareEstimate(ctx context.Context, riderID uuid.UUID, req fareEstimateRequest, now time.Time) schemamodels.TripFare {
 	distanceKM := haversineKM(req.PickupLat, req.PickupLng, req.DropoffLat, req.DropoffLng)
 	estimatedMinutes := 0.0
 	if s.cfg.FareAverageSpeedKPH > 0 {
 		estimatedMinutes = (distanceKM / s.cfg.FareAverageSpeedKPH) * 60
+	}
+
+	var routeDistanceKM, routeDurationMinutes *float64
+	var routePolyline *string
+	if s.directions != nil {
+		route, err := s.directions.Route(ctx, req.PickupLat, req.PickupLng, req.DropoffLat, req.DropoffLng)
+		if err != nil {
+			log.Printf("directions route unavailable, falling back to haversine estimate: %v", err)
+		} else {
+			distanceKM = route.DistanceKM
+			estimatedMinutes = route.DurationMinutes
+			routeDistanceKM = &route.DistanceKM
+			routeDurationMinutes = &route.DurationMinutes
+			routePolyline = &route.Polyline
+		}
 	}
 
 	baseFare := roundMoney(s.cfg.FareBaseAmount)
@@ -629,28 +666,31 @@ func (s *Server) buildFareEstimate(riderID uuid.UUID, req fareEstimateRequest, n
 	expiresAt := now.Add(s.cfg.FareLockTTL)
 
 	return schemamodels.TripFare{
-		ID:              uuid.New(),
-		RiderID:         riderID,
-		PickupLat:       req.PickupLat,
-		PickupLng:       req.PickupLng,
-		DropoffLat:      req.DropoffLat,
-		DropoffLng:      req.DropoffLng,
-		PickupGeohash:   geohashFromLatLng(req.PickupLat, req.PickupLng),
-		PickupS2CellID:  s2CellIDFromLatLng(req.PickupLat, req.PickupLng),
-		SearchRadiusKM:  req.SearchRadiusKM,
-		CurrencyCode:    s.cfg.FareCurrencyCode,
-		BaseFare:        baseFare,
-		DistanceFare:    distanceFare,
-		TimeFare:        timeFare,
-		SurchargeTotal:  surchargeTotal,
-		DiscountTotal:   discountTotal,
-		SurgeMultiplier: surgeMultiplier,
-		TotalFare:       totalFare,
-		PricingVersion:  s.cfg.FarePricingVersion,
-		LockedAt:        now,
-		ExpiresAt:       &expiresAt,
-		CreatedAt:       now,
-		UpdatedAt:       now,
+		ID:                   uuid.New(),
+		RiderID:              riderID,
+		PickupLat:            req.PickupLat,
+		PickupLng:            req.PickupLng,
+		DropoffLat:           req.DropoffLat,
+		DropoffLng:           req.DropoffLng,
+		PickupGeohash:        geohashFromLatLng(req.PickupLat, req.PickupLng),
+		PickupS2CellID:       s2CellIDFromLatLng(req.PickupLat, req.PickupLng),
+		SearchRadiusKM:       req.SearchRadiusKM,
+		CurrencyCode:         s.cfg.FareCurrencyCode,
+		BaseFare:             baseFare,
+		DistanceFare:         distanceFare,
+		TimeFare:             timeFare,
+		SurchargeTotal:       surchargeTotal,
+		DiscountTotal:        discountTotal,
+		SurgeMultiplier:      surgeMultiplier,
+		TotalFare:            totalFare,
+		PricingVersion:       s.cfg.FarePricingVersion,
+		RouteDistanceKM:      routeDistanceKM,
+		RouteDurationMinutes: routeDurationMinutes,
+		RoutePolyline:        routePolyline,
+		LockedAt:             now,
+		ExpiresAt:            &expiresAt,
+		CreatedAt:            now,
+		UpdatedAt:            now,
 	}
 }
 
