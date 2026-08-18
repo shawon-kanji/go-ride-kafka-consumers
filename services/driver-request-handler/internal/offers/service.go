@@ -991,6 +991,41 @@ func (s *Service) ListTrips(ctx context.Context, driverID uuid.UUID, cursorTime 
 	return rows, nil
 }
 
+// EarningsRow is one completed trip's contribution to an earnings query —
+// gross cash collected (final_fare), not commission-adjusted: cash-only
+// settlement means final_fare is exactly what the driver physically holds
+// after the trip, unlike JobOfferV1's pre-accept estimated_earning, which
+// forecasts the driver's eventual net take before a commission is settled
+// (a separate, out-of-band process for cash trips).
+type EarningsRow struct {
+	FinalFare    float64   `gorm:"column:final_fare"`
+	CurrencyCode *string   `gorm:"column:currency_code"`
+	CompletedAt  time.Time `gorm:"column:completed_at"`
+}
+
+// EarningsSince returns every completed trip (payment collected) for
+// driverID with completed_at >= since, oldest first. Only "completed" status
+// counts as earned — "awaiting_payment" means cash hasn't actually been
+// collected yet, so it isn't money the driver has in hand.
+func (s *Service) EarningsSince(ctx context.Context, driverID uuid.UUID, since time.Time) ([]EarningsRow, error) {
+	query := `
+		SELECT ot.final_fare, tf.currency_code, ot.completed_at
+		FROM ongoing_trips ot
+		LEFT JOIN trip_requests tr ON tr.request_id = ot.request_id
+		LEFT JOIN trip_fares tf ON tf.fare_id = tr.fare_id
+		WHERE ot.driver_id = ?
+		  AND ot.status = ?
+		  AND ot.completed_at >= ?
+		ORDER BY ot.completed_at ASC
+	`
+	var rows []EarningsRow
+	err := s.db.WithContext(ctx).Raw(query, driverID, schemamodels.OngoingTripStatusCompleted, since).Scan(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("query driver earnings driver_id=%s: %w", driverID, err)
+	}
+	return rows, nil
+}
+
 // CurrentTrip lets a driver who force-quit or crashed mid-trip recover which
 // trip they're on, its status, and the rider's fare — the driver-side
 // mirror of cab-request-handler's GET /current-trip. Never errors on
