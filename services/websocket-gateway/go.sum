@@ -71,8 +71,8 @@ github.com/segmentio/kafka-go v0.4.47 h1:IqziR4pA3vrZq7YdRxaT3w1/5fvIH5qpCwstUan
 github.com/segmentio/kafka-go v0.4.47/go.mod h1:HjF6XbOKh0Pjlkr5GVZxt6CsjjwnmhVOfURM5KMd8qg=
 github.com/shawon-kanji/go-ride-db-schema v0.3.6 h1:o8xSZKHtcXNyUPUMGBhwIv1VPrelVpGNVAHYOyV6Umc=
 github.com/shawon-kanji/go-ride-db-schema v0.3.6/go.mod h1:d/kEFxnGKhbusE0ZcsH1AkRRDWcIT8MM6n+MYBV5RUQ=
-github.com/shawon-kanji/go-ride-utils v0.1.3 h1:bs9TyYiOw7BZEh2LDeQYOivC7VGVrsH5NP5oxrWgdak=
-github.com/shawon-kanji/go-ride-utils v0.1.3/go.mod h1:L0dnMw7GvTqY8SMVicf1jc6nRbjd5xogcgGr96RNp34=
+github.com/shawon-kanji/go-ride-utils v0.1.4 h1:cXz3xRJreCrZPUdok1c4QUntelG7JVobPoVayl/ra3I=
+github.com/shawon-kanji/go-ride-utils v0.1.4/go.mod h1:L0dnMw7GvTqY8SMVicf1jc6nRbjd5xogcgGr96RNp34=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/objx v0.4.0/go.mod h1:YvHI0jy2hoMjB+UWwv71VJQ9isScKT/TqJzVSSt89Yw=
 github.com/stretchr/testify v1.3.0/go.mod h1:M5WIy9Dh21IEIfnGCwXGc5bZfKNJtfHm1UVUgZn+9EI=
