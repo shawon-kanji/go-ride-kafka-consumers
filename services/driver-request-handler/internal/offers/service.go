@@ -1026,6 +1026,35 @@ func (s *Service) EarningsSince(ctx context.Context, driverID uuid.UUID, since t
 	return rows, nil
 }
 
+// OnlineSessionRow is one driver_online_sessions row possibly overlapping a
+// query window — EndedAt nil means still open (ongoing as of "now").
+type OnlineSessionRow struct {
+	StartedAt time.Time  `gorm:"column:started_at"`
+	EndedAt   *time.Time `gorm:"column:ended_at"`
+}
+
+// OnlineSessionsOverlapping returns every session for driverID that
+// overlaps [since, now] at all — including one that started before since
+// (still online from earlier) or is still open (EndedAt nil). Callers clip
+// each row to the window themselves; a session spanning multiple days needs
+// per-day clipping too; see the api package's bucketOnlineTime.
+func (s *Service) OnlineSessionsOverlapping(ctx context.Context, driverID uuid.UUID, since, now time.Time) ([]OnlineSessionRow, error) {
+	query := `
+		SELECT started_at, ended_at
+		FROM driver_online_sessions
+		WHERE driver_id = ?
+		  AND started_at <= ?
+		  AND COALESCE(ended_at, ?) >= ?
+		ORDER BY started_at ASC
+	`
+	var rows []OnlineSessionRow
+	err := s.db.WithContext(ctx).Raw(query, driverID, now, now, since).Scan(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("query driver online sessions driver_id=%s: %w", driverID, err)
+	}
+	return rows, nil
+}
+
 // CurrentTrip lets a driver who force-quit or crashed mid-trip recover which
 // trip they're on, its status, and the rider's fare — the driver-side
 // mirror of cab-request-handler's GET /current-trip. Never errors on

@@ -12,17 +12,6 @@ import (
 	"github.com/google/uuid"
 )
 
-const (
-	earningsPeriodToday = "today"
-	earningsPeriodWeek  = "week"
-
-	// earningsWeekDays is a trailing 7-day window (today plus the six days
-	// before it), not a calendar week — simpler and avoids a partial first
-	// bar right after a week/month boundary. Matches D11's "seven-bar
-	// per-day chart".
-	earningsWeekDays = 7
-)
-
 type earningsDailyEntry struct {
 	Date      string  `json:"date"` // YYYY-MM-DD, UTC calendar day
 	Earnings  float64 `json:"earnings"`
@@ -38,11 +27,7 @@ type earningsResponse struct {
 }
 
 // handleEarnings backs D06's "today's earnings" stat and D11's week total +
-// trip count + seven-bar chart. Day boundaries are UTC calendar days — this
-// system stores every timestamp in UTC and has no per-driver timezone
-// anywhere in the schema, so a UTC-day bucket is the simplest option that's
-// still consistent with the rest of the backend; it will misalign with the
-// driver's actual local day by their UTC offset, a known simplification.
+// trip count + seven-bar chart.
 func (s *Server) handleEarnings(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.Header().Set("Allow", http.MethodGet)
@@ -68,22 +53,11 @@ func (s *Server) handleEarnings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	period := r.URL.Query().Get("period")
-	if period == "" {
-		period = earningsPeriodToday
-	}
-	if period != earningsPeriodToday && period != earningsPeriodWeek {
-		writeJSONError(w, http.StatusBadRequest, "invalid_period", "period must be one of: today, week")
+	now := time.Now().UTC()
+	period, since, windowDays, ok := parsePeriodWindow(w, r, now)
+	if !ok {
 		return
 	}
-
-	now := time.Now().UTC()
-	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-	windowDays := 1
-	if period == earningsPeriodWeek {
-		windowDays = earningsWeekDays
-	}
-	since := today.AddDate(0, 0, -(windowDays - 1))
 
 	rows, err := s.offers.EarningsSince(r.Context(), driverID, since)
 	if err != nil {
@@ -101,12 +75,12 @@ func (s *Server) handleEarnings(w http.ResponseWriter, r *http.Request) {
 // bucketEarnings is the pure aggregation step, split out from the handler so
 // the day-bucketing math (the one genuinely fiddly part here) is unit-
 // testable without a database. daily buckets are only populated for
-// period == earningsPeriodWeek — D06's "today" card just needs the totals.
+// period == periodWeek — D06's "today" card just needs the totals.
 func bucketEarnings(rows []offers.EarningsRow, period string, since time.Time, windowDays int) earningsResponse {
 	response := earningsResponse{Period: period}
 
 	var dailyBuckets []earningsDailyEntry
-	if period == earningsPeriodWeek {
+	if period == periodWeek {
 		dailyBuckets = make([]earningsDailyEntry, windowDays)
 		for i := range dailyBuckets {
 			dailyBuckets[i].Date = since.AddDate(0, 0, i).Format("2006-01-02")

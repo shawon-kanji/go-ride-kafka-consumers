@@ -24,10 +24,10 @@ func TestBucketEarningsToday(t *testing.T) {
 		{FinalFare: 7.25, CurrencyCode: &sgd, CompletedAt: today.Add(14 * time.Hour)},
 	}
 
-	got := bucketEarnings(rows, earningsPeriodToday, today, 1)
+	got := bucketEarnings(rows, periodToday, today, 1)
 
-	if got.Period != earningsPeriodToday {
-		t.Errorf("period = %q, want %q", got.Period, earningsPeriodToday)
+	if got.Period != periodToday {
+		t.Errorf("period = %q, want %q", got.Period, periodToday)
 	}
 	if got.TotalEarnings != 19.75 {
 		t.Errorf("total_earnings = %v, want 19.75", got.TotalEarnings)
@@ -52,7 +52,7 @@ func TestBucketEarningsWeekProducesSevenBucketsOldestFirst(t *testing.T) {
 		{FinalFare: 3, CurrencyCode: &sgd, CompletedAt: since.AddDate(0, 0, 6).Add(1 * time.Hour)},  // also day 6
 	}
 
-	got := bucketEarnings(rows, earningsPeriodWeek, since, 7)
+	got := bucketEarnings(rows, periodWeek, since, 7)
 
 	if len(got.Daily) != 7 {
 		t.Fatalf("daily buckets = %d, want 7", len(got.Daily))
@@ -79,7 +79,7 @@ func TestBucketEarningsWeekProducesSevenBucketsOldestFirst(t *testing.T) {
 func TestBucketEarningsNoTripsReturnsZeroedResponse(t *testing.T) {
 	today := mustParseDay(t, "2026-08-18")
 
-	got := bucketEarnings(nil, earningsPeriodToday, today, 1)
+	got := bucketEarnings(nil, periodToday, today, 1)
 
 	if got.TotalEarnings != 0 || got.TripCount != 0 || got.CurrencyCode != "" {
 		t.Errorf("got %+v, want all-zero response", got)
