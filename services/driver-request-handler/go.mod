@@ -6,8 +6,8 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
 	github.com/segmentio/kafka-go v0.4.47
-	github.com/shawon-kanji/go-ride-db-schema v0.3.6
-	github.com/shawon-kanji/go-ride-utils v0.1.2
+	github.com/shawon-kanji/go-ride-db-schema v0.4.3
+	github.com/shawon-kanji/go-ride-utils v0.1.3
 	gorm.io/driver/postgres v1.6.0
 	gorm.io/gorm v1.31.1
 )

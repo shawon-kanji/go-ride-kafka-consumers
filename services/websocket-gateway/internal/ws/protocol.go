@@ -95,6 +95,7 @@ type RideAssignedMessage struct {
 	PickupLng     float64   `json:"pickup_lng"`
 	DropoffLat    float64   `json:"dropoff_lat"`
 	DropoffLng    float64   `json:"dropoff_lng"`
+	StartPin      string    `json:"start_pin,omitempty"`
 	VehicleColor  string    `json:"vehicle_color,omitempty"`
 	VehiclePlate  string    `json:"vehicle_plate,omitempty"`
 	VehicleModel  string    `json:"vehicle_model,omitempty"`
@@ -114,6 +115,7 @@ type RideAssignedParams struct {
 	PickupLng     float64
 	DropoffLat    float64
 	DropoffLng    float64
+	StartPin      string
 	VehicleColor  string
 	VehiclePlate  string
 	VehicleModel  string
@@ -132,6 +134,7 @@ func NewRideAssignedMessage(p RideAssignedParams) RideAssignedMessage {
 		DriverLng:     p.DriverLng,
 		PickupLat:     p.PickupLat,
 		PickupLng:     p.PickupLng,
+		StartPin:      p.StartPin,
 		DropoffLat:    p.DropoffLat,
 		DropoffLng:    p.DropoffLng,
 		VehicleColor:  p.VehicleColor,

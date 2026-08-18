@@ -76,6 +76,10 @@ type collectPaymentResponse struct {
 	CurrencyCode string             `json:"currency_code,omitempty"`
 }
 
+type startTripBody struct {
+	StartPin string `json:"start_pin"`
+}
+
 type cancelTripBody struct {
 	Reason string `json:"reason,omitempty"`
 }
@@ -249,7 +253,17 @@ func (s *Server) handleStartTrip(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := s.offers.StartTrip(r.Context(), ongoingTripID, driverID)
+	var body startTripBody
+	if decodeErr := json.NewDecoder(r.Body).Decode(&body); decodeErr != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid_request_body", "request body must be valid JSON")
+		return
+	}
+	if !isValidStartPin(body.StartPin) {
+		writeJSONError(w, http.StatusBadRequest, "invalid_start_pin", "start_pin must be exactly 4 digits")
+		return
+	}
+
+	result, err := s.offers.StartTrip(r.Context(), ongoingTripID, driverID, body.StartPin)
 	if err != nil {
 		switch {
 		case errors.Is(err, offers.ErrTripNotFound):
@@ -258,6 +272,8 @@ func (s *Server) handleStartTrip(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusForbidden, "trip_forbidden", "ongoing trip does not belong to this driver")
 		case errors.Is(err, offers.ErrTripNotStartable):
 			writeJSONError(w, http.StatusConflict, "trip_not_startable", "trip is not in a startable state")
+		case errors.Is(err, offers.ErrInvalidStartPin):
+			writeJSONError(w, http.StatusForbidden, "invalid_start_pin", "start_pin does not match this trip")
 		default:
 			log.Printf("start trip ongoing_trip_id=%s driver_id=%s: %v", ongoingTripID, driverID, err)
 			writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to start trip")
@@ -478,4 +494,16 @@ func writeJSONError(w http.ResponseWriter, status int, code, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(errorResponse{Error: code, Message: message})
+}
+
+func isValidStartPin(pin string) bool {
+	if len(pin) != 4 {
+		return false
+	}
+	for _, r := range pin {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }

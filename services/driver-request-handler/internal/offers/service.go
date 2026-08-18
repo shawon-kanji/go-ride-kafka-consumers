@@ -2,9 +2,11 @@ package offers
 
 import (
 	"context"
+	cryptorand "crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
 	"time"
 
 	"github.com/shawon-kanji/go-ride-utils/events"
@@ -24,6 +26,7 @@ var (
 	ErrTripNotFound         = errors.New("trip_not_found")
 	ErrTripForbidden        = errors.New("trip_forbidden")
 	ErrTripNotStartable     = errors.New("trip_not_startable")
+	ErrInvalidStartPin      = errors.New("invalid_start_pin")
 	ErrTripNotEndable       = errors.New("trip_not_endable")
 	ErrTripNotCollectable   = errors.New("trip_not_collectable")
 	ErrTripAlreadyCancelled = errors.New("trip_already_cancelled")
@@ -66,6 +69,15 @@ type Service struct {
 
 func NewService(db *gorm.DB, producer kafka.Producer) *Service {
 	return &Service{db: db, producer: producer}
+}
+
+// generateStartPin returns a zero-padded 4-digit PIN, e.g. "0042".
+func generateStartPin() (string, error) {
+	n, err := cryptorand.Int(cryptorand.Reader, big.NewInt(10000))
+	if err != nil {
+		return "", fmt.Errorf("generate start pin: %w", err)
+	}
+	return fmt.Sprintf("%04d", n.Int64()), nil
 }
 
 // AcceptOffer implements the first-wins acceptance lock: it row-locks the
@@ -138,6 +150,16 @@ func (s *Service) AcceptOffer(ctx context.Context, jobOfferID, driverID uuid.UUI
 			return fmt.Errorf("load active vehicle driver_id=%s: %w", driverID, err)
 		}
 
+		// startPin is what the rider reads out to the driver at pickup and
+		// the driver types into StartTrip to prove they're at the right car
+		// — regenerated on every assignment (including redispatch reuse
+		// below) so a fired driver's PIN never carries over to whoever picks
+		// the request up next.
+		startPin, err := generateStartPin()
+		if err != nil {
+			return err
+		}
+
 		// ongoing_trips.request_id is uniquely constrained for the request's
 		// entire lifetime, so a request that's been redispatched after a prior
 		// driver cancelled (its ongoing_trips row already exists, in status
@@ -164,6 +186,7 @@ func (s *Service) AcceptOffer(ctx context.Context, jobOfferID, driverID uuid.UUI
 				DropoffLat: request.DropoffLat,
 				DropoffLng: request.DropoffLng,
 				AssignedAt: now,
+				StartPin:   &startPin,
 				CreatedAt:  now,
 				UpdatedAt:  now,
 			}
@@ -180,6 +203,7 @@ func (s *Service) AcceptOffer(ctx context.Context, jobOfferID, driverID uuid.UUI
 					"vehicle_id":           vehicleID,
 					"status":               schemamodels.OngoingTripStatusAssigned,
 					"assigned_at":          now,
+					"start_pin":            startPin,
 					"started_at":           nil,
 					"ended_at":             nil,
 					"completed_at":         nil,
@@ -198,6 +222,7 @@ func (s *Service) AcceptOffer(ctx context.Context, jobOfferID, driverID uuid.UUI
 			ongoingTrip.VehicleID = vehicleID
 			ongoingTrip.Status = schemamodels.OngoingTripStatusAssigned
 			ongoingTrip.AssignedAt = now
+			ongoingTrip.StartPin = &startPin
 			ongoingTrip.StartedAt = nil
 			ongoingTrip.EndedAt = nil
 			ongoingTrip.CompletedAt = nil
@@ -287,6 +312,9 @@ func (s *Service) AcceptOffer(ctx context.Context, jobOfferID, driverID uuid.UUI
 		EventID:       result.OngoingTrip.ID.String(),
 		PublishedAt:   time.Now().UTC(),
 	}
+	if result.OngoingTrip.StartPin != nil {
+		event.StartPin = *result.OngoingTrip.StartPin
+	}
 	if result.Vehicle != nil {
 		event.VehicleColor = result.Vehicle.Color
 		event.VehiclePlate = result.Vehicle.PlateNumber
@@ -306,8 +334,11 @@ func (s *Service) AcceptOffer(ctx context.Context, jobOfferID, driverID uuid.UUI
 // StartTrip marks a trip started once the driver has reached the rider and
 // they're onboard: a single collapsed assigned -> in_progress transition, no
 // separate "driver_arriving"/"arrived" step and no geofence validation
-// against pickup coordinates — same trust-the-driver's-tap model as accept.
-func (s *Service) StartTrip(ctx context.Context, ongoingTripID, driverID uuid.UUID) (StartTripResult, error) {
+// against pickup coordinates — same trust-the-driver's-tap model as accept,
+// except for the PIN check, which is the one thing that does confirm the
+// driver is actually with the right rider (the rider reads it off their
+// app and the driver types it in).
+func (s *Service) StartTrip(ctx context.Context, ongoingTripID, driverID uuid.UUID, startPin string) (StartTripResult, error) {
 	now := time.Now().UTC()
 	var result StartTripResult
 	var correlationID *string
@@ -329,6 +360,9 @@ func (s *Service) StartTrip(ctx context.Context, ongoingTripID, driverID uuid.UU
 		}
 		if trip.Status != schemamodels.OngoingTripStatusAssigned {
 			return ErrTripNotStartable
+		}
+		if trip.StartPin == nil || *trip.StartPin != startPin {
+			return ErrInvalidStartPin
 		}
 
 		if err := tx.Model(&schemamodels.OngoingTrip{}).

@@ -52,6 +52,7 @@ func (d *Deliverer) HandleBroadcast(ctx context.Context, payload []byte) {
 		PickupLng:     event.PickupLng,
 		DropoffLat:    event.DropoffLat,
 		DropoffLng:    event.DropoffLng,
+		StartPin:      event.StartPin,
 		VehicleColor:  event.VehicleColor,
 		VehiclePlate:  event.VehiclePlate,
 		VehicleModel:  event.VehicleModel,
