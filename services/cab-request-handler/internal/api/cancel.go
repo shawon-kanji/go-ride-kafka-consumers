@@ -24,8 +24,7 @@ var (
 )
 
 type cancelCabRequestRequest struct {
-	RiderID string `json:"rider_id"`
-	Reason  string `json:"reason,omitempty"`
+	Reason string `json:"reason,omitempty"`
 }
 
 type cancelCabRequestResponse struct {
@@ -58,6 +57,11 @@ func (s *Server) handleCancelTripRequest(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	riderID, ok := s.authenticateRider(w, r)
+	if !ok {
+		return
+	}
+
 	requestID, err := uuid.Parse(r.PathValue("request_id"))
 	if err != nil {
 		http.Error(w, "request_id must be a valid UUID", http.StatusBadRequest)
@@ -69,12 +73,6 @@ func (s *Server) handleCancelTripRequest(w http.ResponseWriter, r *http.Request)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&req); err != nil {
 		http.Error(w, fmt.Sprintf("invalid request body: %v", err), http.StatusBadRequest)
-		return
-	}
-
-	riderID, err := uuid.Parse(req.RiderID)
-	if err != nil {
-		http.Error(w, "rider_id must be a valid UUID", http.StatusBadRequest)
 		return
 	}
 

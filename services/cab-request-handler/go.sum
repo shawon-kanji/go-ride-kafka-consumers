@@ -31,6 +31,8 @@ github.com/aws/smithy-go v1.27.3/go.mod h1:YE2RhdIuDbA5E5bTdciG9KrW3+TiEONeUWCqx
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
+github.com/golang-jwt/jwt/v5 v5.3.1 h1:kYf81DTWFe7t+1VvL7eS+jKFVWaUnK9cB1qbwn63YCY=
+github.com/golang-jwt/jwt/v5 v5.3.1/go.mod h1:fxCRLWMO43lRc8nhHWY6LGqRcf+1gQWArsqaEUEa5bE=
 github.com/golang/geo v0.0.0-20260713102120-857a528af641 h1:cpoobkgVGCE6bC5kJkOfwfM6hAtZuvoBjnCLECxG4AU=
 github.com/golang/geo v0.0.0-20260713102120-857a528af641/go.mod h1:Mymr9kRGDc64JPr03TSZmuIBODZ3KyswLzm1xL0HFA8=
 github.com/google/go-cmp v0.7.0 h1:wk8382ETsv4JYUZwIsn6YpYiWiBsYLSJiTsyBybVuN8=
@@ -59,10 +61,10 @@ github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZb
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/segmentio/kafka-go v0.4.47 h1:IqziR4pA3vrZq7YdRxaT3w1/5fvIH5qpCwstUanQQB0=
 github.com/segmentio/kafka-go v0.4.47/go.mod h1:HjF6XbOKh0Pjlkr5GVZxt6CsjjwnmhVOfURM5KMd8qg=
-github.com/shawon-kanji/go-ride-db-schema v0.3.6 h1:o8xSZKHtcXNyUPUMGBhwIv1VPrelVpGNVAHYOyV6Umc=
-github.com/shawon-kanji/go-ride-db-schema v0.3.6/go.mod h1:d/kEFxnGKhbusE0ZcsH1AkRRDWcIT8MM6n+MYBV5RUQ=
-github.com/shawon-kanji/go-ride-utils v0.1.2 h1:/k71lWfTba/JBLqdut2V5pgB/IM4W9mQ8iepxasqZLM=
-github.com/shawon-kanji/go-ride-utils v0.1.2/go.mod h1:L0dnMw7GvTqY8SMVicf1jc6nRbjd5xogcgGr96RNp34=
+github.com/shawon-kanji/go-ride-db-schema v0.4.3 h1:tauMOQtAdtnG1vPRiLPZcX0n6Rh0DqDxc+JCUiuDywk=
+github.com/shawon-kanji/go-ride-db-schema v0.4.3/go.mod h1:d/kEFxnGKhbusE0ZcsH1AkRRDWcIT8MM6n+MYBV5RUQ=
+github.com/shawon-kanji/go-ride-utils v0.1.3 h1:bs9TyYiOw7BZEh2LDeQYOivC7VGVrsH5NP5oxrWgdak=
+github.com/shawon-kanji/go-ride-utils v0.1.3/go.mod h1:L0dnMw7GvTqY8SMVicf1jc6nRbjd5xogcgGr96RNp34=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/objx v0.4.0/go.mod h1:YvHI0jy2hoMjB+UWwv71VJQ9isScKT/TqJzVSSt89Yw=
 github.com/stretchr/testify v1.3.0/go.mod h1:M5WIy9Dh21IEIfnGCwXGc5bZfKNJtfHm1UVUgZn+9EI=

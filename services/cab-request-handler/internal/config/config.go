@@ -28,6 +28,9 @@ type Config struct {
 	FareMinimumAmount     float64
 	FareAverageSpeedKPH   float64
 	FareLockTTL           time.Duration
+	JWTSecret             string
+	JWTIssuer             string
+	JWTAudience           string
 }
 
 type DBConfig struct {
@@ -95,6 +98,17 @@ func Load(ctx context.Context) (Config, error) {
 		}
 	}
 
+	jwtSecret := getEnv("JWT_SECRET", "")
+	if secretName := getEnv("JWT_SECRET_NAME", ""); secretName != "" {
+		values, err := awssecrets.FetchJSON(ctx, secretName)
+		if err != nil {
+			return Config{}, fmt.Errorf("fetch jwt secret: %w", err)
+		}
+		if v, ok := values["JWT_SECRET"]; ok {
+			jwtSecret = v
+		}
+	}
+
 	cfg := Config{
 		ServiceName: getEnv("SERVICE_NAME", "cab-request-handler"),
 		HTTPAddr:    getEnv("HTTP_ADDR", ":8082"),
@@ -118,6 +132,9 @@ func Load(ctx context.Context) (Config, error) {
 		FareMinimumAmount:     fareMinimumAmount,
 		FareAverageSpeedKPH:   fareAverageSpeedKPH,
 		FareLockTTL:           time.Duration(fareLockTTLMinutes) * time.Minute,
+		JWTSecret:             jwtSecret,
+		JWTIssuer:             getEnv("JWT_ISSUER", "go-ride-backend"),
+		JWTAudience:           getEnv("JWT_AUDIENCE", "go-ride-clients"),
 	}
 
 	if len(cfg.KafkaBrokers) == 0 {
@@ -140,6 +157,15 @@ func Load(ctx context.Context) (Config, error) {
 	}
 	if cfg.FareLockTTL <= 0 {
 		return Config{}, fmt.Errorf("FARE_LOCK_TTL_MINUTES must be greater than zero")
+	}
+	if cfg.JWTSecret == "" {
+		return Config{}, fmt.Errorf("JWT_SECRET is required")
+	}
+	if cfg.JWTIssuer == "" {
+		return Config{}, fmt.Errorf("JWT_ISSUER is required")
+	}
+	if cfg.JWTAudience == "" {
+		return Config{}, fmt.Errorf("JWT_AUDIENCE is required")
 	}
 
 	return cfg, nil

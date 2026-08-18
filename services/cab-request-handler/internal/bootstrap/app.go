@@ -7,6 +7,7 @@ import (
 	"log"
 
 	"go-ride-kafka-consumers/services/cab-request-handler/internal/api"
+	"go-ride-kafka-consumers/services/cab-request-handler/internal/auth"
 	"go-ride-kafka-consumers/services/cab-request-handler/internal/config"
 	"go-ride-kafka-consumers/services/cab-request-handler/internal/db"
 	"go-ride-kafka-consumers/services/cab-request-handler/internal/kafka"
@@ -35,8 +36,9 @@ func New(ctx context.Context) (*App, error) {
 		return nil, fmt.Errorf("extract sql db: %w", err)
 	}
 
+	verifier := auth.NewVerifier(cfg.JWTSecret, cfg.JWTIssuer, cfg.JWTAudience)
 	producer := kafka.NewRideRequestProducer(cfg)
-	server := api.NewServer(cfg, gormDB, producer)
+	server := api.NewServer(cfg, verifier, gormDB, producer)
 
 	return &App{
 		cfg:      cfg,

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"go-ride-kafka-consumers/services/cab-request-handler/internal/auth"
 	"go-ride-kafka-consumers/services/cab-request-handler/internal/config"
 	"go-ride-kafka-consumers/services/cab-request-handler/internal/kafka"
 
@@ -45,13 +46,13 @@ var (
 
 type Server struct {
 	cfg      config.Config
+	verifier *auth.Verifier
 	db       *gorm.DB
 	producer kafka.Producer
 	http     *http.Server
 }
 
 type createCabRequestRequest struct {
-	RiderID        string    `json:"rider_id"`
 	FareID         string    `json:"fare_id"`
 	IdempotencyKey string    `json:"idempotency_key,omitempty"`
 	CorrelationID  string    `json:"correlation_id,omitempty"`
@@ -59,7 +60,6 @@ type createCabRequestRequest struct {
 }
 
 type fareEstimateRequest struct {
-	RiderID        string  `json:"rider_id"`
 	PickupLat      float64 `json:"pickup_lat"`
 	PickupLng      float64 `json:"pickup_lng"`
 	DropoffLat     float64 `json:"dropoff_lat"`
@@ -152,6 +152,7 @@ type ongoingTripPayload struct {
 	DropoffLat         float64    `json:"dropoff_lat"`
 	DropoffLng         float64    `json:"dropoff_lng"`
 	AssignedAt         time.Time  `json:"assigned_at"`
+	StartPin           *string    `json:"start_pin,omitempty"`
 	StartedAt          *time.Time `json:"started_at,omitempty"`
 	EndedAt            *time.Time `json:"ended_at,omitempty"`
 	CompletedAt        *time.Time `json:"completed_at,omitempty"`
@@ -161,9 +162,10 @@ type ongoingTripPayload struct {
 	PaymentCollectedAt *time.Time `json:"payment_collected_at,omitempty"`
 }
 
-func NewServer(cfg config.Config, db *gorm.DB, producer kafka.Producer) *Server {
+func NewServer(cfg config.Config, verifier *auth.Verifier, db *gorm.DB, producer kafka.Producer) *Server {
 	server := &Server{
 		cfg:      cfg,
+		verifier: verifier,
 		db:       db,
 		producer: producer,
 	}
@@ -235,6 +237,11 @@ func (s *Server) handleCreateCabRequest(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	riderID, ok := s.authenticateRider(w, r)
+	if !ok {
+		return
+	}
+
 	var req createCabRequestRequest
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBodyBytes))
 	decoder.DisallowUnknownFields()
@@ -260,7 +267,7 @@ func (s *Server) handleCreateCabRequest(w http.ResponseWriter, r *http.Request) 
 		req.CorrelationID = uuid.NewString()
 	}
 
-	bundle, err := s.createOrLoadCabRequest(r.Context(), req, requestedAt, now)
+	bundle, err := s.createOrLoadCabRequest(r.Context(), riderID, req, requestedAt, now)
 	if err != nil {
 		switch {
 		case errors.Is(err, errFareNotFound):
@@ -270,7 +277,7 @@ func (s *Server) handleCreateCabRequest(w http.ResponseWriter, r *http.Request) 
 		case errors.Is(err, errFareAlreadyUsed):
 			writeJSONError(w, http.StatusConflict, "fare_already_used", "fare_id has already been booked")
 		default:
-			log.Printf("persist cab request rider_id=%s: %v", req.RiderID, err)
+			log.Printf("persist cab request rider_id=%s: %v", riderID, err)
 			http.Error(w, "failed to create cab request", http.StatusInternalServerError)
 		}
 		return
@@ -311,6 +318,11 @@ func (s *Server) handleFareEstimate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	riderID, ok := s.authenticateRider(w, r)
+	if !ok {
+		return
+	}
+
 	var req fareEstimateRequest
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBodyBytes))
 	decoder.DisallowUnknownFields()
@@ -324,12 +336,6 @@ func (s *Server) handleFareEstimate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	riderID, err := uuid.Parse(req.RiderID)
-	if err != nil {
-		http.Error(w, "rider_id must be a valid UUID", http.StatusBadRequest)
-		return
-	}
-
 	if req.SearchRadiusKM <= 0 {
 		req.SearchRadiusKM = s.cfg.DefaultSearchRadiusKM
 	}
@@ -337,7 +343,7 @@ func (s *Server) handleFareEstimate(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	fare := s.buildFareEstimate(riderID, req, now)
 	if err := s.db.WithContext(r.Context()).Create(&fare).Error; err != nil {
-		log.Printf("persist fare estimate rider_id=%s: %v", req.RiderID, err)
+		log.Printf("persist fare estimate rider_id=%s: %v", riderID, err)
 		http.Error(w, "failed to create fare estimate", http.StatusInternalServerError)
 		return
 	}
@@ -362,7 +368,7 @@ func (s *Server) handleFareEstimate(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(response)
-	log.Printf("created fare estimate fare_id=%s rider_id=%s", response.FareID, req.RiderID)
+	log.Printf("created fare estimate fare_id=%s rider_id=%s", response.FareID, riderID)
 }
 
 func (s *Server) handleCurrentTrip(w http.ResponseWriter, r *http.Request) {
@@ -372,15 +378,8 @@ func (s *Server) handleCurrentTrip(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	riderIDValue := strings.TrimSpace(r.URL.Query().Get("rider_id"))
-	if riderIDValue == "" {
-		http.Error(w, "rider_id is required", http.StatusBadRequest)
-		return
-	}
-
-	riderID, err := uuid.Parse(riderIDValue)
-	if err != nil {
-		http.Error(w, "rider_id must be a valid UUID", http.StatusBadRequest)
+	riderID, ok := s.authenticateRider(w, r)
+	if !ok {
 		return
 	}
 
@@ -447,6 +446,7 @@ func (s *Server) handleCurrentTrip(w http.ResponseWriter, r *http.Request) {
 			DropoffLat:         ongoingTrip.DropoffLat,
 			DropoffLng:         ongoingTrip.DropoffLng,
 			AssignedAt:         ongoingTrip.AssignedAt,
+			StartPin:           ongoingTrip.StartPin,
 			StartedAt:          ongoingTrip.StartedAt,
 			EndedAt:            ongoingTrip.EndedAt,
 			CompletedAt:        ongoingTrip.CompletedAt,
@@ -506,12 +506,7 @@ func (s *Server) loadLatestOngoingTrip(ctx context.Context, riderID uuid.UUID) (
 	return &ongoingTrip, nil
 }
 
-func (s *Server) createOrLoadCabRequest(ctx context.Context, req createCabRequestRequest, requestedAt, now time.Time) (requestBundle, error) {
-	riderID, err := uuid.Parse(req.RiderID)
-	if err != nil {
-		return requestBundle{}, fmt.Errorf("parse rider_id: %w", err)
-	}
-
+func (s *Server) createOrLoadCabRequest(ctx context.Context, riderID uuid.UUID, req createCabRequestRequest, requestedAt, now time.Time) (requestBundle, error) {
 	fareID, err := uuid.Parse(req.FareID)
 	if err != nil {
 		return requestBundle{}, fmt.Errorf("parse fare_id: %w", err)
@@ -703,9 +698,6 @@ func (s *Server) newRideRequestedEvent(bundle requestBundle, requestedAt, now ti
 }
 
 func validateCreateCabRequestRequest(req createCabRequestRequest) error {
-	if _, err := uuid.Parse(req.RiderID); err != nil {
-		return fmt.Errorf("rider_id must be a valid UUID")
-	}
 	if _, err := uuid.Parse(req.FareID); err != nil {
 		return fmt.Errorf("fare_id must be a valid UUID")
 	}
@@ -720,9 +712,6 @@ func validateCreateCabRequestRequest(req createCabRequestRequest) error {
 }
 
 func validateFareEstimateRequest(req fareEstimateRequest) error {
-	if _, err := uuid.Parse(req.RiderID); err != nil {
-		return fmt.Errorf("rider_id must be a valid UUID")
-	}
 	if req.PickupLat < -90 || req.PickupLat > 90 {
 		return fmt.Errorf("pickup_lat must be between -90 and 90")
 	}
@@ -754,6 +743,41 @@ func writeJSONError(w http.ResponseWriter, status int, code, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(errorResponse{Error: code, Message: message})
+}
+
+func bearerToken(r *http.Request) string {
+	header := strings.TrimSpace(r.Header.Get("Authorization"))
+	if !strings.HasPrefix(header, "Bearer ") {
+		return ""
+	}
+	return strings.TrimSpace(strings.TrimPrefix(header, "Bearer "))
+}
+
+// authenticateRider verifies the request's bearer token and returns the
+// rider ID from its claims. The caller's rider_id is always derived from the
+// token, never from a client-supplied body or query parameter, so a rider
+// can only ever act on their own trips. On failure it writes the JSON error
+// response itself and returns ok=false — callers just check ok and return.
+func (s *Server) authenticateRider(w http.ResponseWriter, r *http.Request) (riderID uuid.UUID, ok bool) {
+	token := bearerToken(r)
+	if token == "" {
+		writeJSONError(w, http.StatusUnauthorized, "unauthorized", "missing bearer token")
+		return uuid.UUID{}, false
+	}
+
+	claims, err := s.verifier.Parse(token)
+	if err != nil || claims.Role != auth.RiderRole {
+		writeJSONError(w, http.StatusUnauthorized, "unauthorized", "invalid or non-rider token")
+		return uuid.UUID{}, false
+	}
+
+	riderID, err = uuid.Parse(claims.UserID)
+	if err != nil {
+		writeJSONError(w, http.StatusUnauthorized, "unauthorized", "invalid rider id in token")
+		return uuid.UUID{}, false
+	}
+
+	return riderID, true
 }
 
 func haversineKM(lat1, lng1, lat2, lng2 float64) float64 {
