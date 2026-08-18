@@ -87,8 +87,13 @@ type startTripBody struct {
 	StartPin string `json:"start_pin"`
 }
 
+// cancelTripBody's Reason is required (not omitempty): D10's cancel screen
+// disables its confirm button until one of the five fixed radio reasons is
+// chosen, so the driver client always sends one. Note is a separate,
+// genuinely optional freeform field, never validated against the enum.
 type cancelTripBody struct {
-	Reason string `json:"reason,omitempty"`
+	Reason string `json:"reason"`
+	Note   string `json:"note,omitempty"`
 }
 
 type cancelTripResponse struct {
@@ -484,7 +489,12 @@ func (s *Server) handleCancelTrip(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := s.offers.CancelTrip(r.Context(), ongoingTripID, driverID, body.Reason)
+	if !isValidCancellationReason(body.Reason) {
+		writeJSONError(w, http.StatusBadRequest, "invalid_cancellation_reason", "reason must be one of: "+strings.Join(schemamodels.ValidCancellationReasons(), ", "))
+		return
+	}
+
+	result, err := s.offers.CancelTrip(r.Context(), ongoingTripID, driverID, body.Reason, body.Note)
 	if err != nil {
 		switch {
 		case errors.Is(err, offers.ErrTripNotFound):
@@ -569,4 +579,13 @@ func isValidStartPin(pin string) bool {
 		}
 	}
 	return true
+}
+
+func isValidCancellationReason(reason string) bool {
+	for _, valid := range schemamodels.ValidCancellationReasons() {
+		if reason == valid {
+			return true
+		}
+	}
+	return false
 }

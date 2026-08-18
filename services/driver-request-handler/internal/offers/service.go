@@ -733,7 +733,7 @@ func (s *Service) CollectPayment(ctx context.Context, ongoingTripID, driverID uu
 // straight-line distance between the driver's last-known location and the
 // dropoff point on the trip_history row — a safety audit fact, not acted on
 // here (no SOS/alerting; that's future work).
-func (s *Service) CancelTrip(ctx context.Context, ongoingTripID, driverID uuid.UUID, reason string) (CancelTripResult, error) {
+func (s *Service) CancelTrip(ctx context.Context, ongoingTripID, driverID uuid.UUID, reason, note string) (CancelTripResult, error) {
 	now := time.Now().UTC()
 	var result CancelTripResult
 
@@ -778,9 +778,12 @@ func (s *Service) CancelTrip(ctx context.Context, ongoingTripID, driverID uuid.U
 
 		fromStatus := trip.Status
 		cancelledBy := schemamodels.CancelledByDriver
-		var reasonPtr *string
+		var reasonPtr, notePtr *string
 		if reason != "" {
 			reasonPtr = &reason
+		}
+		if note != "" {
+			notePtr = &note
 		}
 
 		if err := tx.Model(&schemamodels.OngoingTrip{}).
@@ -789,6 +792,7 @@ func (s *Service) CancelTrip(ctx context.Context, ongoingTripID, driverID uuid.U
 				"status":              schemamodels.OngoingTripStatusCancelled,
 				"cancelled_at":        now,
 				"cancellation_reason": reasonPtr,
+				"cancellation_note":   notePtr,
 				"cancelled_by":        cancelledBy,
 				"updated_at":          now,
 			}).Error; err != nil {
@@ -797,6 +801,7 @@ func (s *Service) CancelTrip(ctx context.Context, ongoingTripID, driverID uuid.U
 		trip.Status = schemamodels.OngoingTripStatusCancelled
 		trip.CancelledAt = &now
 		trip.CancellationReason = reasonPtr
+		trip.CancellationNote = notePtr
 		trip.CancelledBy = &cancelledBy
 
 		if err := tx.Model(&schemamodels.TripRequest{}).
@@ -805,6 +810,7 @@ func (s *Service) CancelTrip(ctx context.Context, ongoingTripID, driverID uuid.U
 				"status":              schemamodels.TripRequestStatusCancelled,
 				"cancelled_at":        now,
 				"cancellation_reason": reasonPtr,
+				"cancellation_note":   notePtr,
 				"cancelled_by":        cancelledBy,
 				"updated_at":          now,
 			}).Error; err != nil {
@@ -813,6 +819,7 @@ func (s *Service) CancelTrip(ctx context.Context, ongoingTripID, driverID uuid.U
 		request.Status = schemamodels.TripRequestStatusCancelled
 		request.CancelledAt = &now
 		request.CancellationReason = reasonPtr
+		request.CancellationNote = notePtr
 		request.CancelledBy = &cancelledBy
 
 		payload := map[string]any{"ongoing_trip_id": trip.ID}
@@ -878,6 +885,9 @@ func (s *Service) CancelTrip(ctx context.Context, ongoingTripID, driverID uuid.U
 	}
 	if result.TripRequest.CancellationReason != nil {
 		event.CancellationReason = *result.TripRequest.CancellationReason
+	}
+	if result.TripRequest.CancellationNote != nil {
+		event.CancellationNote = *result.TripRequest.CancellationNote
 	}
 	if result.TripRequest.CorrelationID != nil {
 		event.CorrelationID = *result.TripRequest.CorrelationID
