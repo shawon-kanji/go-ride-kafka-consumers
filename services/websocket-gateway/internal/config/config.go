@@ -17,29 +17,31 @@ type Config struct {
 	HTTPAddr    string
 	DB          DBConfig
 
-	KafkaBrokers       []string
-	KafkaConsumerGroup string
-	OfferCreatedTopic  string
-	RideAssignedTopic  string
-	RideStartedTopic   string
-	RideEndedTopic     string
-	RideCompletedTopic string
-	RideCancelledTopic string
+	KafkaBrokers        []string
+	KafkaConsumerGroup  string
+	OfferCreatedTopic   string
+	OfferWithdrawnTopic string
+	RideAssignedTopic   string
+	RideStartedTopic    string
+	RideEndedTopic      string
+	RideCompletedTopic  string
+	RideCancelledTopic  string
 	// DriverLocationTopic must match location-producers' KAFKA_TOPIC / the
 	// root Makefile's LOCATION_TOPIC — they must stay in sync manually,
 	// same caveat as DriverCommissionRate below.
 	DriverLocationTopic string
 
-	RedisAddr                 string
-	RedisPassword             string
-	RedisDB                   int
-	RedisChannel              string
-	RedisAssignmentChannel    string
-	RedisLocationChannel      string
-	RedisTripStartedChannel   string
-	RedisTripEndedChannel     string
-	RedisTripCompletedChannel string
-	RedisTripCancelledChannel string
+	RedisAddr                  string
+	RedisPassword              string
+	RedisDB                    int
+	RedisChannel               string
+	RedisAssignmentChannel     string
+	RedisLocationChannel       string
+	RedisTripStartedChannel    string
+	RedisTripEndedChannel      string
+	RedisTripCompletedChannel  string
+	RedisTripCancelledChannel  string
+	RedisOfferWithdrawnChannel string
 
 	// ActiveTripTTL bounds how long a driver->rider active-trip mapping
 	// (used to filter the location firehose) survives in Redis. There's no
@@ -161,6 +163,7 @@ func Load(ctx context.Context) (Config, error) {
 		KafkaBrokers:        splitAndTrim(getEnv("KAFKA_BROKERS", "localhost:9094")),
 		KafkaConsumerGroup:  getEnv("KAFKA_CONSUMER_GROUP", "websocket-gateway-group"),
 		OfferCreatedTopic:   getEnv("KAFKA_OFFER_CREATED_TOPIC", kafkatopics.DriverJobOfferCreatedV1),
+		OfferWithdrawnTopic: getEnv("KAFKA_OFFER_WITHDRAWN_TOPIC", kafkatopics.DriverJobOfferWithdrawnV1),
 		RideAssignedTopic:   getEnv("KAFKA_ASSIGNED_TOPIC", kafkatopics.RideAssignedV1),
 		RideStartedTopic:    getEnv("KAFKA_STARTED_TOPIC", kafkatopics.RideStartedV1),
 		RideEndedTopic:      getEnv("KAFKA_ENDED_TOPIC", kafkatopics.RideEndedV1),
@@ -168,16 +171,17 @@ func Load(ctx context.Context) (Config, error) {
 		RideCancelledTopic:  getEnv("KAFKA_CANCELLED_TOPIC", kafkatopics.RideCancelledV1),
 		DriverLocationTopic: getEnv("KAFKA_LOCATION_TOPIC", kafkatopics.DriverLocationUpdatedV1),
 
-		RedisAddr:                 getEnv("REDIS_ADDR", "localhost:6379"),
-		RedisPassword:             getEnv("REDIS_PASSWORD", ""),
-		RedisDB:                   redisDB,
-		RedisChannel:              getEnv("REDIS_OFFER_CHANNEL", "driver-offers"),
-		RedisAssignmentChannel:    getEnv("REDIS_ASSIGNMENT_CHANNEL", "ride-assignments"),
-		RedisLocationChannel:      getEnv("REDIS_LOCATION_CHANNEL", "driver-location-updates"),
-		RedisTripStartedChannel:   getEnv("REDIS_TRIP_STARTED_CHANNEL", "trip-started"),
-		RedisTripEndedChannel:     getEnv("REDIS_TRIP_ENDED_CHANNEL", "trip-ended"),
-		RedisTripCompletedChannel: getEnv("REDIS_TRIP_COMPLETED_CHANNEL", "trip-completed"),
-		RedisTripCancelledChannel: getEnv("REDIS_TRIP_CANCELLED_CHANNEL", "trip-cancelled"),
+		RedisAddr:                  getEnv("REDIS_ADDR", "localhost:6379"),
+		RedisPassword:              getEnv("REDIS_PASSWORD", ""),
+		RedisDB:                    redisDB,
+		RedisChannel:               getEnv("REDIS_OFFER_CHANNEL", "driver-offers"),
+		RedisOfferWithdrawnChannel: getEnv("REDIS_OFFER_WITHDRAWN_CHANNEL", "driver-offer-withdrawn"),
+		RedisAssignmentChannel:     getEnv("REDIS_ASSIGNMENT_CHANNEL", "ride-assignments"),
+		RedisLocationChannel:       getEnv("REDIS_LOCATION_CHANNEL", "driver-location-updates"),
+		RedisTripStartedChannel:    getEnv("REDIS_TRIP_STARTED_CHANNEL", "trip-started"),
+		RedisTripEndedChannel:      getEnv("REDIS_TRIP_ENDED_CHANNEL", "trip-ended"),
+		RedisTripCompletedChannel:  getEnv("REDIS_TRIP_COMPLETED_CHANNEL", "trip-completed"),
+		RedisTripCancelledChannel:  getEnv("REDIS_TRIP_CANCELLED_CHANNEL", "trip-cancelled"),
 
 		ActiveTripTTL: time.Duration(activeTripTTLSeconds) * time.Second,
 
@@ -200,6 +204,9 @@ func Load(ctx context.Context) (Config, error) {
 	}
 	if cfg.OfferCreatedTopic == "" {
 		return Config{}, fmt.Errorf("KAFKA_OFFER_CREATED_TOPIC is required")
+	}
+	if cfg.OfferWithdrawnTopic == "" {
+		return Config{}, fmt.Errorf("KAFKA_OFFER_WITHDRAWN_TOPIC is required")
 	}
 	if cfg.RideAssignedTopic == "" {
 		return Config{}, fmt.Errorf("KAFKA_ASSIGNED_TOPIC is required")
