@@ -37,6 +37,20 @@ const driverCancelledEventType = "driver_cancelled"
 // offered rides. Going offline only ever worked in practice because most
 // driver apps also stop the location stream and/or close the websocket on
 // that same tap; the backend itself never enforced it.
+// The JOIN vehicles v ... AND v.is_active = true plus the tier-eligibility
+// clause below it are B1's dispatch-side half: a request's service_type
+// (RIDE/RIDE_XL/RIDE_PREMIUM, denormalized onto trip_requests at booking
+// time) constrains which of a driver's active vehicle qualifies. RIDE has
+// no extra requirement (any active vehicle can serve it — it's the floor
+// tier); RIDE_XL requires seat_count >= 6; RIDE_PREMIUM requires
+// category = 'luxury'. Deliberately a floor, not an exact match: a luxury
+// car is allowed to serve a RIDE request (no rider complains about an
+// upgrade), but a normal car must not serve a RIDE_PREMIUM request (the
+// rider paid for and expects the nicer car) — this is what closes the
+// "a luxury booking could be offered to a normal car" gap POLISHED-MVP.md
+// flagged. serviceType is passed three times, once per branch, rather than
+// building the clause dynamically, since there are only ever these three
+// fixed tiers.
 const nearestDriversQueryTemplate = `
 WITH candidate_distances AS (
     SELECT
@@ -52,9 +66,15 @@ WITH candidate_distances AS (
         ) AS distance_km
     FROM driver_locations dl
     JOIN drivers d ON d.id = dl.driver_id
+    JOIN vehicles v ON v.driver_id = dl.driver_id AND v.is_active = true
     WHERE dl.recorded_at >= ?
       AND d.is_online = true
       AND d.is_paused = false
+      AND (
+          ? = 'RIDE'
+          OR (? = 'RIDE_XL' AND v.seat_count >= 6)
+          OR (? = 'RIDE_PREMIUM' AND v.category = 'luxury')
+      )
       %s
 )
 SELECT cd.driver_id, cd.distance_km
@@ -167,8 +187,9 @@ func (s *Service) AttemptDispatch(ctx context.Context, requestID uuid.UUID) erro
 		coveringMins, coveringMaxs := s2CoveringRanges(req.PickupLat, req.PickupLng, radius)
 		query, coveringArgs := buildNearestDriversQuery(coveringMins, coveringMaxs)
 
-		args := make([]any, 0, 10+len(coveringArgs))
+		args := make([]any, 0, 13+len(coveringArgs))
 		args = append(args, req.PickupLat, req.PickupLng, req.PickupLat, freshSince)
+		args = append(args, req.ServiceType, req.ServiceType, req.ServiceType)
 		args = append(args, coveringArgs...)
 		args = append(args, radius, schemamodels.ActiveOngoingTripStatuses(), req.ID, driverCancelledEventType, s.cfg.NearestDriversLimit)
 
