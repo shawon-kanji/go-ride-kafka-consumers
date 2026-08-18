@@ -34,10 +34,11 @@ var (
 )
 
 type AcceptResult struct {
-	TripRequest schemamodels.TripRequest
-	OngoingTrip schemamodels.OngoingTrip
-	Fare        *schemamodels.TripFare
-	Vehicle     *schemamodels.Vehicle
+	TripRequest     schemamodels.TripRequest
+	OngoingTrip     schemamodels.OngoingTrip
+	Fare            *schemamodels.TripFare
+	Vehicle         *schemamodels.Vehicle
+	WithdrawnOffers []schemamodels.DriverJobOffer
 }
 
 type StartTripResult struct {
@@ -156,11 +157,32 @@ func (s *Service) AcceptOffer(ctx context.Context, jobOfferID, driverID uuid.UUI
 			return fmt.Errorf("mark offer accepted: %w", err)
 		}
 
-		if err := tx.Model(&schemamodels.DriverJobOffer{}).
+		// Losing offers are marked withdrawn (not expired): "expired" is
+		// reserved for an offer whose TTL simply ran out with no winner at
+		// all, which the driver app already renders via its own countdown.
+		// "Withdrawn" is the distinct, event-carrying case of "someone else
+		// took it" — locked and captured here (rather than a blind bulk
+		// UPDATE) so the caller has the exact (job_offer_id, driver_id)
+		// pairs to publish on JobOfferWithdrawnV1 after commit.
+		var losingOffers []schemamodels.DriverJobOffer
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			Where("request_id = ? AND job_offer_id <> ? AND status = ?", offer.RequestID, offer.ID, schemamodels.DriverJobOfferStatusPending).
-			Updates(map[string]any{"status": schemamodels.DriverJobOfferStatusExpired, "updated_at": now}).Error; err != nil {
-			return fmt.Errorf("expire losing offers request_id=%s: %w", offer.RequestID, err)
+			Order("job_offer_id ASC").
+			Find(&losingOffers).Error; err != nil {
+			return fmt.Errorf("lock losing offers request_id=%s: %w", offer.RequestID, err)
 		}
+		if len(losingOffers) > 0 {
+			losingIDs := make([]uuid.UUID, len(losingOffers))
+			for i, lo := range losingOffers {
+				losingIDs[i] = lo.ID
+			}
+			if err := tx.Model(&schemamodels.DriverJobOffer{}).
+				Where("job_offer_id IN ?", losingIDs).
+				Updates(map[string]any{"status": schemamodels.DriverJobOfferStatusWithdrawn, "withdrawn_at": now, "updated_at": now}).Error; err != nil {
+				return fmt.Errorf("withdraw losing offers request_id=%s: %w", offer.RequestID, err)
+			}
+		}
+		result.WithdrawnOffers = losingOffers
 
 		if err := tx.Model(&schemamodels.TripRequest{}).
 			Where("request_id = ?", request.ID).
@@ -303,7 +325,10 @@ func (s *Service) AcceptOffer(ctx context.Context, jobOfferID, driverID uuid.UUI
 			}
 		}
 
-		result = AcceptResult{TripRequest: request, OngoingTrip: ongoingTrip, Fare: fare, Vehicle: vehicle}
+		result.TripRequest = request
+		result.OngoingTrip = ongoingTrip
+		result.Fare = fare
+		result.Vehicle = vehicle
 		return nil
 	})
 	if err != nil {
@@ -360,6 +385,26 @@ func (s *Service) AcceptOffer(ctx context.Context, jobOfferID, driverID uuid.UUI
 
 	if err := s.producer.PublishRideAssigned(ctx, event); err != nil {
 		return AcceptResult{}, fmt.Errorf("publish ride assigned request_id=%s: %w", event.RequestID, err)
+	}
+
+	if len(result.WithdrawnOffers) > 0 {
+		withdrawnEvent := events.JobOfferWithdrawnV1{
+			RequestID:     result.TripRequest.ID.String(),
+			TripID:        result.TripRequest.TripID.String(),
+			Offers:        make([]events.JobOfferWithdrawnEntry, len(result.WithdrawnOffers)),
+			CorrelationID: event.CorrelationID,
+			EventID:       result.OngoingTrip.ID.String() + ":withdrawn",
+			PublishedAt:   time.Now().UTC(),
+		}
+		for i, lo := range result.WithdrawnOffers {
+			withdrawnEvent.Offers[i] = events.JobOfferWithdrawnEntry{
+				JobOfferID: lo.ID.String(),
+				DriverID:   lo.DriverID.String(),
+			}
+		}
+		if err := s.producer.PublishJobOfferWithdrawn(ctx, withdrawnEvent); err != nil {
+			return AcceptResult{}, fmt.Errorf("publish job offer withdrawn request_id=%s: %w", withdrawnEvent.RequestID, err)
+		}
 	}
 
 	return result, nil

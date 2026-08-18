@@ -12,6 +12,7 @@ RIDE_COMPLETED_TOPIC ?= ride.completed.v1
 RIDE_UNASSIGNED_TOPIC ?= ride.unassigned.v1
 RIDE_CANCELLED_TOPIC ?= ride.cancelled.v1
 DRIVER_JOB_OFFER_CREATED_TOPIC ?= driver.job_offer.created.v1
+DRIVER_JOB_OFFER_WITHDRAWN_TOPIC ?= driver.job_offer.withdrawn.v1
 
 .PHONY: up down restart logs ps topic-create topic-list topic-delete topic-create-all migrate-up migrate-down migrate-version \
 	build-location build-location-producers build-location-consumers build-cab build-cab-request-handler build-dispatch build-websocket-gateway build-driver-request-handler test-location test-cab test-cab-request-handler test-dispatch test-websocket-gateway test-driver-request-handler \
@@ -50,6 +51,7 @@ topic-create-all:
 	$(COMPOSE) exec -T kafka kafka-topics.sh --create --if-not-exists --topic $(RIDE_UNASSIGNED_TOPIC) --bootstrap-server localhost:9092 --partitions 3 --replication-factor 1
 	$(COMPOSE) exec -T kafka kafka-topics.sh --create --if-not-exists --topic $(RIDE_CANCELLED_TOPIC) --bootstrap-server localhost:9092 --partitions 3 --replication-factor 1
 	$(COMPOSE) exec -T kafka kafka-topics.sh --create --if-not-exists --topic $(DRIVER_JOB_OFFER_CREATED_TOPIC) --bootstrap-server localhost:9092 --partitions 3 --replication-factor 1
+	$(COMPOSE) exec -T kafka kafka-topics.sh --create --if-not-exists --topic $(DRIVER_JOB_OFFER_WITHDRAWN_TOPIC) --bootstrap-server localhost:9092 --partitions 3 --replication-factor 1
 
 migrate-up:
 	cd ../go-ride-db-schema && go run ./cmd/migrate up

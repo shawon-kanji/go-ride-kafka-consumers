@@ -18,6 +18,7 @@ type Producer interface {
 	PublishRideEnded(ctx context.Context, event events.RideEndedV1) error
 	PublishRideCompleted(ctx context.Context, event events.RideCompletedV1) error
 	PublishRideCancelled(ctx context.Context, event events.RideCancelledV1) error
+	PublishJobOfferWithdrawn(ctx context.Context, event events.JobOfferWithdrawnV1) error
 	Close() error
 }
 
@@ -32,6 +33,8 @@ type RideAssignedProducer struct {
 	completedTopic  string
 	cancelledWriter *kafkago.Writer
 	cancelledTopic  string
+	withdrawnWriter *kafkago.Writer
+	withdrawnTopic  string
 }
 
 func NewRideAssignedProducer(cfg config.Config) *RideAssignedProducer {
@@ -90,6 +93,17 @@ func NewRideAssignedProducer(cfg config.Config) *RideAssignedProducer {
 		AllowAutoTopicCreation: false,
 	}
 
+	withdrawnWriter := &kafkago.Writer{
+		Addr:                   kafkago.TCP(cfg.KafkaBrokers...),
+		Topic:                  cfg.WithdrawnTopic,
+		Balancer:               &kafkago.Hash{},
+		RequiredAcks:           kafkago.RequireOne,
+		BatchTimeout:           50 * time.Millisecond,
+		WriteTimeout:           5 * time.Second,
+		ReadTimeout:            5 * time.Second,
+		AllowAutoTopicCreation: false,
+	}
+
 	return &RideAssignedProducer{
 		writer:          writer,
 		topic:           cfg.AssignedTopic,
@@ -101,6 +115,8 @@ func NewRideAssignedProducer(cfg config.Config) *RideAssignedProducer {
 		completedTopic:  cfg.CompletedTopic,
 		cancelledWriter: cancelledWriter,
 		cancelledTopic:  cfg.CancelledTopic,
+		withdrawnWriter: withdrawnWriter,
+		withdrawnTopic:  cfg.WithdrawnTopic,
 	}
 }
 
@@ -199,6 +215,25 @@ func (p *RideAssignedProducer) PublishRideCancelled(ctx context.Context, event e
 	return nil
 }
 
+func (p *RideAssignedProducer) PublishJobOfferWithdrawn(ctx context.Context, event events.JobOfferWithdrawnV1) error {
+	payload, err := json.Marshal(event)
+	if err != nil {
+		return fmt.Errorf("marshal job offer withdrawn event: %w", err)
+	}
+
+	message := kafkago.Message{
+		Key:   []byte(event.RequestID),
+		Value: payload,
+		Time:  event.PublishedAt,
+	}
+
+	if err := p.withdrawnWriter.WriteMessages(ctx, message); err != nil {
+		return fmt.Errorf("write kafka message topic=%s: %w", p.withdrawnTopic, err)
+	}
+
+	return nil
+}
+
 func (p *RideAssignedProducer) Close() error {
 	if err := p.writer.Close(); err != nil {
 		return err
@@ -212,5 +247,8 @@ func (p *RideAssignedProducer) Close() error {
 	if err := p.completedWriter.Close(); err != nil {
 		return err
 	}
-	return p.cancelledWriter.Close()
+	if err := p.cancelledWriter.Close(); err != nil {
+		return err
+	}
+	return p.withdrawnWriter.Close()
 }
