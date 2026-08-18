@@ -1055,6 +1055,79 @@ func (s *Service) OnlineSessionsOverlapping(ctx context.Context, driverID uuid.U
 	return rows, nil
 }
 
+// DriverStatsRow is the raw material for D11's three header tiles —
+// rating/trip-count/acceptance-score — assembled from three cheap counts
+// plus the rating aggregate go-ride-backend's rating write (B7) already
+// denormalized onto drivers. AcceptedOffers/TotalScoredOffers/
+// DriverCancelledTrips are handed to the api package's pure
+// computeAcceptanceScore rather than turned into a score here, so that
+// formula stays unit-testable without a database.
+type DriverStatsRow struct {
+	RatingAverage        *float64
+	RatingCount          int
+	TripCount            int
+	AcceptedOffers       int
+	TotalScoredOffers    int
+	DriverCancelledTrips int
+}
+
+// DriverStats gathers D11's stats in three cheap queries rather than one
+// join, since they touch three unrelated tables (drivers, ongoing_trips
+// twice for different predicates, driver_job_offers) with no natural join
+// key linking them all at once.
+func (s *Service) DriverStats(ctx context.Context, driverID uuid.UUID) (DriverStatsRow, error) {
+	var driver schemamodels.Driver
+	if err := s.db.WithContext(ctx).Where("id = ?", driverID).Take(&driver).Error; err != nil {
+		return DriverStatsRow{}, fmt.Errorf("load driver driver_id=%s: %w", driverID, err)
+	}
+
+	var tripCount int64
+	if err := s.db.WithContext(ctx).Model(&schemamodels.OngoingTrip{}).
+		Where("driver_id = ? AND status = ?", driverID, schemamodels.OngoingTripStatusCompleted).
+		Count(&tripCount).Error; err != nil {
+		return DriverStatsRow{}, fmt.Errorf("count driver trips driver_id=%s: %w", driverID, err)
+	}
+
+	// TotalScoredOffers excludes "withdrawn" (someone else won the race
+	// before this driver could respond at all — not this driver's choice)
+	// but includes "expired" (didn't respond in time — functionally a
+	// non-acceptance, same as this driver's own JobOfferWithdrawnV1
+	// distinction between the two statuses).
+	var offerCounts struct {
+		AcceptedCount int `gorm:"column:accepted_count"`
+		TotalOffers   int `gorm:"column:total_offers"`
+	}
+	if err := s.db.WithContext(ctx).Raw(`
+		SELECT
+		  COUNT(*) FILTER (WHERE status = ?) AS accepted_count,
+		  COUNT(*) FILTER (WHERE status IN (?, ?, ?)) AS total_offers
+		FROM driver_job_offers
+		WHERE driver_id = ?
+	`,
+		schemamodels.DriverJobOfferStatusAccepted,
+		schemamodels.DriverJobOfferStatusAccepted, schemamodels.DriverJobOfferStatusRejected, schemamodels.DriverJobOfferStatusExpired,
+		driverID,
+	).Scan(&offerCounts).Error; err != nil {
+		return DriverStatsRow{}, fmt.Errorf("count driver offers driver_id=%s: %w", driverID, err)
+	}
+
+	var driverCancelledCount int64
+	if err := s.db.WithContext(ctx).Model(&schemamodels.OngoingTrip{}).
+		Where("driver_id = ? AND cancelled_by = ?", driverID, schemamodels.CancelledByDriver).
+		Count(&driverCancelledCount).Error; err != nil {
+		return DriverStatsRow{}, fmt.Errorf("count driver cancellations driver_id=%s: %w", driverID, err)
+	}
+
+	return DriverStatsRow{
+		RatingAverage:        driver.RatingAverage,
+		RatingCount:          driver.RatingCount,
+		TripCount:            int(tripCount),
+		AcceptedOffers:       offerCounts.AcceptedCount,
+		TotalScoredOffers:    offerCounts.TotalOffers,
+		DriverCancelledTrips: int(driverCancelledCount),
+	}, nil
+}
+
 // CurrentTrip lets a driver who force-quit or crashed mid-trip recover which
 // trip they're on, its status, and the rider's fare — the driver-side
 // mirror of cab-request-handler's GET /current-trip. Never errors on
