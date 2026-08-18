@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -23,8 +24,23 @@ var (
 	errCancelNotCancellable   = errors.New("trip_not_cancellable")
 )
 
+func isValidCancellationReason(reason string) bool {
+	for _, valid := range schemamodels.ValidCancellationReasons() {
+		if reason == valid {
+			return true
+		}
+	}
+	return false
+}
+
+// cancelCabRequestRequest's Reason is optional — unlike the driver's cancel
+// screen (D10), the design has no reason-picker for a rider cancelling
+// during search, so there's nothing forcing the client to send one. If
+// present, it's still validated against the same fixed enum the driver path
+// uses. Note is a separate, always-optional freeform field.
 type cancelCabRequestRequest struct {
 	Reason string `json:"reason,omitempty"`
+	Note   string `json:"note,omitempty"`
 }
 
 type cancelCabRequestResponse struct {
@@ -76,8 +92,13 @@ func (s *Server) handleCancelTripRequest(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	if req.Reason != "" && !isValidCancellationReason(req.Reason) {
+		writeJSONError(w, http.StatusBadRequest, "invalid_cancellation_reason", "reason, if given, must be one of: "+strings.Join(schemamodels.ValidCancellationReasons(), ", "))
+		return
+	}
+
 	now := time.Now().UTC()
-	result, err := s.cancelTripRequest(r.Context(), requestID, riderID, req.Reason, now)
+	result, err := s.cancelTripRequest(r.Context(), requestID, riderID, req.Reason, req.Note, now)
 	if err != nil {
 		switch {
 		case errors.Is(err, errCancelRequestNotFound):
@@ -130,7 +151,7 @@ func (s *Server) handleCancelTripRequest(w http.ResponseWriter, r *http.Request)
 // first, matching AcceptOffer's own lock ordering (offer-then-request) --
 // this handler never holds an offer lock while waiting on a request lock a
 // second time, so the two can't deadlock against each other.
-func (s *Server) cancelTripRequest(ctx context.Context, requestID, riderID uuid.UUID, reason string, now time.Time) (cancelResult, error) {
+func (s *Server) cancelTripRequest(ctx context.Context, requestID, riderID uuid.UUID, reason, note string, now time.Time) (cancelResult, error) {
 	var result cancelResult
 
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -156,12 +177,13 @@ func (s *Server) cancelTripRequest(ctx context.Context, requestID, riderID uuid.
 		}
 
 		reasonPtr := stringPtr(reason)
+		notePtr := stringPtr(note)
 		cancelledBy := schemamodels.CancelledByRider
 
 		if request.Status != schemamodels.TripRequestStatusAssigned {
-			return s.cancelDuringSearch(tx, &result, request, reasonPtr, cancelledBy, now)
+			return s.cancelDuringSearch(tx, &result, request, reasonPtr, notePtr, cancelledBy, now)
 		}
-		return s.cancelAfterAssignment(tx, &result, request, reasonPtr, cancelledBy, now)
+		return s.cancelAfterAssignment(tx, &result, request, reasonPtr, notePtr, cancelledBy, now)
 	})
 	if err != nil {
 		return cancelResult{}, err
@@ -173,7 +195,7 @@ func (s *Server) cancelTripRequest(ctx context.Context, requestID, riderID uuid.
 // cancelDuringSearch handles a cancel while trip_requests is still the
 // authoritative table (search_started/searching/offered/driver_accepted):
 // withdraws any pending job offers and flips trip_requests to cancelled.
-func (s *Server) cancelDuringSearch(tx *gorm.DB, result *cancelResult, request schemamodels.TripRequest, reasonPtr *string, cancelledBy string, now time.Time) error {
+func (s *Server) cancelDuringSearch(tx *gorm.DB, result *cancelResult, request schemamodels.TripRequest, reasonPtr, notePtr *string, cancelledBy string, now time.Time) error {
 	var offers []schemamodels.DriverJobOffer
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 		Where("request_id = ? AND status = ?", request.ID, schemamodels.DriverJobOfferStatusPending).
@@ -202,6 +224,7 @@ func (s *Server) cancelDuringSearch(tx *gorm.DB, result *cancelResult, request s
 			"status":              schemamodels.TripRequestStatusCancelled,
 			"cancelled_at":        now,
 			"cancellation_reason": reasonPtr,
+			"cancellation_note":   notePtr,
 			"cancelled_by":        cancelledBy,
 			"updated_at":          now,
 		}).Error; err != nil {
@@ -210,6 +233,7 @@ func (s *Server) cancelDuringSearch(tx *gorm.DB, result *cancelResult, request s
 	request.Status = schemamodels.TripRequestStatusCancelled
 	request.CancelledAt = &now
 	request.CancellationReason = reasonPtr
+	request.CancellationNote = notePtr
 	request.CancelledBy = &cancelledBy
 
 	payload, err := json.Marshal(map[string]any{
@@ -232,7 +256,7 @@ func (s *Server) cancelDuringSearch(tx *gorm.DB, result *cancelResult, request s
 // cancelAfterAssignment handles a cancel once ongoing_trips is the
 // authoritative table (assigned/driver_arriving/in_progress): flips
 // ongoing_trips to cancelled and mirrors trip_requests to match.
-func (s *Server) cancelAfterAssignment(tx *gorm.DB, result *cancelResult, request schemamodels.TripRequest, reasonPtr *string, cancelledBy string, now time.Time) error {
+func (s *Server) cancelAfterAssignment(tx *gorm.DB, result *cancelResult, request schemamodels.TripRequest, reasonPtr, notePtr *string, cancelledBy string, now time.Time) error {
 	var ongoingTrip schemamodels.OngoingTrip
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 		Where("request_id = ?", request.ID).
@@ -259,6 +283,7 @@ func (s *Server) cancelAfterAssignment(tx *gorm.DB, result *cancelResult, reques
 			"status":              schemamodels.OngoingTripStatusCancelled,
 			"cancelled_at":        now,
 			"cancellation_reason": reasonPtr,
+			"cancellation_note":   notePtr,
 			"cancelled_by":        cancelledBy,
 			"updated_at":          now,
 		}).Error; err != nil {
@@ -267,6 +292,7 @@ func (s *Server) cancelAfterAssignment(tx *gorm.DB, result *cancelResult, reques
 	ongoingTrip.Status = schemamodels.OngoingTripStatusCancelled
 	ongoingTrip.CancelledAt = &now
 	ongoingTrip.CancellationReason = reasonPtr
+	ongoingTrip.CancellationNote = notePtr
 	ongoingTrip.CancelledBy = &cancelledBy
 
 	if err := tx.Model(&schemamodels.TripRequest{}).
@@ -275,6 +301,7 @@ func (s *Server) cancelAfterAssignment(tx *gorm.DB, result *cancelResult, reques
 			"status":              schemamodels.TripRequestStatusCancelled,
 			"cancelled_at":        now,
 			"cancellation_reason": reasonPtr,
+			"cancellation_note":   notePtr,
 			"cancelled_by":        cancelledBy,
 			"updated_at":          now,
 		}).Error; err != nil {
@@ -283,6 +310,7 @@ func (s *Server) cancelAfterAssignment(tx *gorm.DB, result *cancelResult, reques
 	request.Status = schemamodels.TripRequestStatusCancelled
 	request.CancelledAt = &now
 	request.CancellationReason = reasonPtr
+	request.CancellationNote = notePtr
 	request.CancelledBy = &cancelledBy
 
 	payload, err := json.Marshal(map[string]any{"ongoing_trip_id": ongoingTrip.ID})
@@ -329,6 +357,7 @@ func (s *Server) newRideCancelledEvent(result cancelResult, now time.Time) event
 		PriorStatus:             result.priorStatus,
 		WithdrawnOfferDriverIDs: result.withdrawnDriverIDs,
 		CancellationReason:      valueOrEmpty(result.request.CancellationReason),
+		CancellationNote:        valueOrEmpty(result.request.CancellationNote),
 		CancelledBy:             valueOrEmpty(result.request.CancelledBy),
 		CancelledAt:             now,
 		CorrelationID:           valueOrEmpty(result.request.CorrelationID),
