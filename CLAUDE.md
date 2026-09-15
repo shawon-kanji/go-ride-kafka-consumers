@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `go-ride-kafka-consumers` is one of several sibling repos that make up the **go-ride** ride-hailing platform (the others being `go-ride-db-schema` and `go-ride-backend`, checked out alongside this repo). This repo is a monorepo of independently deployable, Kafka-driven Go worker/API services. Kafka is the system backbone: HTTP APIs write DB state and publish events; workers consume events, do their job, and publish downstream events.
 
-The full target architecture (cab request → fare lock → dispatch → driver websocket offers) is documented in `docs/cab-request-flow.md` — read it before making non-trivial changes to the request/dispatch flow, and keep it updated (phase status, endpoint contracts, schema decisions) as that flow evolves.
+The architecture is documented in **`docs/`** — start at [`docs/README.md`](docs/README.md), which indexes six documents: an architecture overview, the booking/trip lifecycle (`cab-request-flow.md`), the matching algorithm (`dispatch-and-matching.md`), the realtime push layer (`driver-rider-realtime-communication.md`), cancellation and redispatch, and a write-up of the platform's hard problems. Read the relevant one before making non-trivial changes to that flow, and keep it updated (endpoint contracts, schema decisions, new limitations) as the flow evolves.
 
 ## Repo layout
 
@@ -14,10 +14,10 @@ The full target architecture (cab request → fare lock → dispatch → driver 
 - **`services/*`**: independently versioned Go modules, each with its own `go.mod`, wired together for local dev via the root `go.work`:
   - `location-producers`: HTTP ingest API + Kafka producer for driver location updates.
   - `location-consumers`: Kafka consumer that persists driver locations.
-  - `cab-request-handler`: HTTP API + Kafka producer for the rider-facing cab request flow (fare estimate, booking, current-trip polling).
-  - `trip-dispatch-worker`: Kafka consumer that matches riders with drivers — real dispatch logic implemented (nearest-driver search via S2/Haversine, job offer creation, radius/backoff retry sweep); publishes `driver.job_offer.created.v1` after each dispatch attempt for `websocket-gateway` to fan out. Driver reject and `ride.unassigned.v1` publishing are not yet implemented.
-  - `driver-request-handler`: HTTP API for driver-initiated actions, the driver-side mirror of `cab-request-handler`. `POST /job-offers/{job_offer_id}/accept` implements the first-wins acceptance lock (row-locks the offer + parent trip request, updates `trip_requests`/`ongoing_trips`/`driver_job_offers`/`trip_history` atomically) and publishes `ride.assigned.v1`.
-  - `websocket-gateway`: WebSocket gateway pushing job offers to connected drivers and ride assignments to connected riders in realtime (`GET /ws/driver`, `GET /ws/rider`), with Redis-backed presence routing for multi-instance operation and DB-backed reconnect replay for driver offers. Driver reject handling and losing-driver "offer withdrawn" notifications are not yet implemented (see `docs/cab-request-flow.md` Phase 7).
+  - `cab-request-handler`: rider-facing HTTP API + Kafka producer, prefix `/api/v1/cab` — multi-tier fare estimate (real driving route via a directions client, haversine fallback), booking against a locked quote, cancellation, current-trip polling, trip history, and driver ratings.
+  - `trip-dispatch-worker`: Kafka consumer that matches riders with drivers — nearest-driver search (S2 covering pre-filter on the indexed numeric `s2_cell_id`, then exact Haversine), filtered by location freshness, `drivers.is_online`/`is_paused`, vehicle tier eligibility, active-trip exclusion and prior driver-cancellation exclusion; ranked job-offer creation; radius-expansion/backoff retry sweep; and redispatch on driver cancellation. Publishes `driver.job_offer.created.v1`. Driver reject and `ride.unassigned.v1` publishing are not implemented.
+  - `driver-request-handler`: driver-facing HTTP API, prefix `/api/v1/driver-trips` — `POST /job-offers/{id}/accept` implements the first-wins acceptance lock (row-locks the offer then the parent trip request, updates `trip_requests`/`ongoing_trips`/`driver_job_offers`/`trip_history` atomically, generates the rider's start PIN) and publishes `ride.assigned.v1` plus `driver.job_offer.withdrawn.v1`; also start (PIN-verified) / end / collect-payment / cancel, plus current-trip recovery, trip history, earnings, online-time and stats.
+  - `websocket-gateway`: WebSocket delivery for both sides (`GET /api/v1/ws/driver`, `GET /api/v1/ws/rider`). Eight Kafka consumers each fan out over their own Redis pub/sub channel using a broadcast-then-filter-locally pattern, so it runs multi-instance with no sticky sessions; DB-backed reconnect replay for driver offers; and a Redis-backed active-trip map that filters the fleet-wide location firehose *before* fan-out. Driver reject handling is not implemented.
 - Every service (and the root module) follows the same internal shape: `cmd/<entrypoint>/main.go` → `internal/bootstrap` (wires config/DB/Kafka/HTTP) → `internal/config`, `internal/kafka` (and/or `internal/api`), `internal/db`/`internal/domain`. Kafka event contracts (JSON-serialized structs) live in the shared [`go-ride-utils/events`](https://github.com/shawon-kanji/go-ride-utils/blob/main/events) package, not a per-service `pkg/events` — see "Shared utilities" below.
 
 ## Shared DB schema
@@ -43,7 +43,7 @@ Local infra (Kafka, Redis, Postgres, AIStor — via the consolidated compose fil
 ```bash
 make up            # start Kafka/Redis/Postgres/AIStor (docker compose, in ../go-ride-infra/local)
 make down
-make topic-create-all   # create all known topics (driver.location.updated.v1, ride.requested.v1, ride.assigned.v1, ride.unassigned.v1)
+make topic-create-all   # create all 10 known topics (see kafkatopics below for the canonical list)
 ```
 
 Build/test (per-service; there is no single top-level `go build ./...` — see below):
