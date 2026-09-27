@@ -6,7 +6,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
 	github.com/segmentio/kafka-go v0.4.47
-	github.com/shawon-kanji/go-ride-db-schema v0.4.6
+	github.com/shawon-kanji/go-ride-db-schema v0.4.10
 	github.com/shawon-kanji/go-ride-utils v0.1.7
 	gorm.io/driver/postgres v1.6.0
 	gorm.io/gorm v1.31.1
@@ -42,5 +42,3 @@ require (
 	golang.org/x/sync v0.12.0 // indirect
 	golang.org/x/text v0.23.0 // indirect
 )
-
-replace github.com/shawon-kanji/go-ride-db-schema => ../../../go-ride-db-schema
