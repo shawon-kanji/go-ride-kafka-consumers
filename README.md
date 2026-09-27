@@ -248,6 +248,3 @@ services/
 
 Each service is an independently versioned Go module with its own `go.mod`, `Dockerfile`, and Helm chart, wired together for local development via the root `go.work`.
 
-## Known limitations, honestly
-
-This platform is upfront about what it doesn't do yet — see each doc's own "Known limitations" section. The short version: cash-only payments (no gateway), no surge pricing (hardcoded `1.0`), no driver-reject flow (offers just expire), and a documented, unrecovered gap if Redis loses its active-trip map mid-flight. None of these are hidden — they're recorded deliberately, alongside the reasoning for not building them yet.
