@@ -83,6 +83,19 @@ type collectPaymentResponse struct {
 	CurrencyCode string             `json:"currency_code,omitempty"`
 }
 
+type rateRiderBody struct {
+	Rating  int    `json:"rating"`
+	Comment string `json:"comment,omitempty"`
+}
+
+type rateRiderResponse struct {
+	Accepted           bool    `json:"accepted"`
+	OngoingTripID      string  `json:"ongoing_trip_id"`
+	Rating             int     `json:"rating"`
+	RiderRatingAverage float64 `json:"rider_rating_average"`
+	RiderRatingCount   int     `json:"rider_rating_count"`
+}
+
 type startTripBody struct {
 	StartPin string `json:"start_pin"`
 }
@@ -134,6 +147,7 @@ func NewServer(cfg config.Config, verifier *auth.Verifier, offerService *offers.
 	mux.HandleFunc("POST "+apiPrefix+"/ongoing-trips/{ongoing_trip_id}/start", server.handleStartTrip)
 	mux.HandleFunc("POST "+apiPrefix+"/ongoing-trips/{ongoing_trip_id}/end", server.handleEndTrip)
 	mux.HandleFunc("POST "+apiPrefix+"/ongoing-trips/{ongoing_trip_id}/collect-payment", server.handleCollectPayment)
+	mux.HandleFunc("POST "+apiPrefix+"/ongoing-trips/{ongoing_trip_id}/rate-rider", server.handleRateRider)
 	mux.HandleFunc("POST "+apiPrefix+"/ongoing-trips/{ongoing_trip_id}/cancel", server.handleCancelTrip)
 
 	server.http = &http.Server{
@@ -459,6 +473,74 @@ func (s *Server) handleCollectPayment(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(response)
 	log.Printf("driver collected payment ongoing_trip_id=%s trip_id=%s driver_id=%s", response.OngoingTrip.TripRecordID, response.OngoingTrip.TripID, driverID)
+}
+
+func (s *Server) handleRateRider(w http.ResponseWriter, r *http.Request) {
+	token := bearerToken(r)
+	if token == "" {
+		writeJSONError(w, http.StatusUnauthorized, "unauthorized", "missing bearer token")
+		return
+	}
+
+	claims, err := s.verifier.Parse(token)
+	if err != nil || claims.Role != auth.DriverRole {
+		writeJSONError(w, http.StatusUnauthorized, "unauthorized", "invalid or non-driver token")
+		return
+	}
+
+	driverID, err := uuid.Parse(claims.UserID)
+	if err != nil {
+		writeJSONError(w, http.StatusUnauthorized, "unauthorized", "invalid driver id in token")
+		return
+	}
+
+	ongoingTripID, err := uuid.Parse(r.PathValue("ongoing_trip_id"))
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid_ongoing_trip_id", "ongoing_trip_id must be a valid UUID")
+		return
+	}
+
+	var body rateRiderBody
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if decodeErr := decoder.Decode(&body); decodeErr != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid_request_body", "request body must be valid JSON")
+		return
+	}
+	if body.Rating < 1 || body.Rating > 5 {
+		writeJSONError(w, http.StatusBadRequest, "invalid_rating", "rating must be an integer from 1 to 5")
+		return
+	}
+
+	result, err := s.offers.RateRider(r.Context(), ongoingTripID, driverID, body.Rating, body.Comment)
+	if err != nil {
+		switch {
+		case errors.Is(err, offers.ErrTripNotFound):
+			writeJSONError(w, http.StatusNotFound, "trip_not_found", "ongoing trip was not found")
+		case errors.Is(err, offers.ErrTripForbidden):
+			writeJSONError(w, http.StatusForbidden, "trip_forbidden", "ongoing trip does not belong to this driver")
+		case errors.Is(err, offers.ErrTripNotCompleted):
+			writeJSONError(w, http.StatusConflict, "trip_not_completed", "only a completed trip can be rated")
+		case errors.Is(err, offers.ErrRiderAlreadyRated):
+			writeJSONError(w, http.StatusConflict, "trip_already_rated", "this trip has already been rated")
+		default:
+			log.Printf("rate rider ongoing_trip_id=%s driver_id=%s: %v", ongoingTripID, driverID, err)
+			writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to save rating")
+		}
+		return
+	}
+
+	response := rateRiderResponse{
+		Accepted:           true,
+		OngoingTripID:      ongoingTripID.String(),
+		Rating:             body.Rating,
+		RiderRatingAverage: result.RatingAverage,
+		RiderRatingCount:   result.RatingCount,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(response)
+	log.Printf("rider rated ongoing_trip_id=%s rider_id=%s rating=%d", ongoingTripID, result.RiderID, body.Rating)
 }
 
 func (s *Server) handleCancelTrip(w http.ResponseWriter, r *http.Request) {

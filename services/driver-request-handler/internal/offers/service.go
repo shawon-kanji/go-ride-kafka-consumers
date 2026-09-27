@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"math/big"
 	"time"
 
@@ -31,6 +32,9 @@ var (
 	ErrTripNotCollectable   = errors.New("trip_not_collectable")
 	ErrTripAlreadyCancelled = errors.New("trip_already_cancelled")
 	ErrTripNotCancellable   = errors.New("trip_not_cancellable")
+
+	ErrTripNotCompleted  = errors.New("trip_not_completed")
+	ErrRiderAlreadyRated = errors.New("trip_already_rated")
 )
 
 type AcceptResult struct {
@@ -53,6 +57,12 @@ type EndTripResult struct {
 type CollectPaymentResult struct {
 	OngoingTrip  schemamodels.OngoingTrip
 	CurrencyCode string
+}
+
+type RateRiderResult struct {
+	RiderID       uuid.UUID
+	RatingAverage float64
+	RatingCount   int
 }
 
 type CancelTripResult struct {
@@ -759,6 +769,99 @@ func (s *Service) CollectPayment(ctx context.Context, ongoingTripID, driverID uu
 	}
 
 	return result, nil
+}
+
+// RateRider lets a driver rate the rider of a completed trip — the reverse
+// of cab-request-handler's rider-rates-driver rateTrip, same shape: one
+// rating per trip (a second attempt is ErrRiderAlreadyRated, not silently
+// overwritten), aggregate recomputed in Go under a row lock on the rated
+// party (users here, drivers there).
+func (s *Service) RateRider(ctx context.Context, ongoingTripID, driverID uuid.UUID, rating int, comment string) (RateRiderResult, error) {
+	now := time.Now().UTC()
+	var result RateRiderResult
+
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var trip schemamodels.OngoingTrip
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ?", ongoingTripID).
+			Take(&trip).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrTripNotFound
+			}
+			return fmt.Errorf("lock ongoing trip id=%s: %w", ongoingTripID, err)
+		}
+
+		if trip.DriverID != driverID {
+			return ErrTripForbidden
+		}
+		if trip.Status != schemamodels.OngoingTripStatusCompleted {
+			return ErrTripNotCompleted
+		}
+
+		var existing schemamodels.RiderRating
+		err := tx.Where("ongoing_trip_id = ?", ongoingTripID).Take(&existing).Error
+		if err == nil {
+			return ErrRiderAlreadyRated
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("check existing rider rating ongoing_trip_id=%s: %w", ongoingTripID, err)
+		}
+
+		var commentPtr *string
+		if comment != "" {
+			commentPtr = &comment
+		}
+		riderRating := schemamodels.RiderRating{
+			ID:            uuid.New(),
+			OngoingTripID: ongoingTripID,
+			DriverID:      driverID,
+			RiderID:       trip.RiderID,
+			Rating:        rating,
+			Comment:       commentPtr,
+			CreatedAt:     now,
+			UpdatedAt:     now,
+		}
+		if err := tx.Create(&riderRating).Error; err != nil {
+			return fmt.Errorf("create rider rating ongoing_trip_id=%s: %w", ongoingTripID, err)
+		}
+
+		var rider schemamodels.User
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ?", trip.RiderID).
+			Take(&rider).Error; err != nil {
+			return fmt.Errorf("lock rider id=%s: %w", trip.RiderID, err)
+		}
+
+		priorAverage := 0.0
+		if rider.RatingAverage != nil {
+			priorAverage = *rider.RatingAverage
+		}
+		newCount := rider.RatingCount + 1
+		newAverage := roundRating((priorAverage*float64(rider.RatingCount) + float64(rating)) / float64(newCount))
+
+		if err := tx.Model(&schemamodels.User{}).Where("id = ?", trip.RiderID).Updates(map[string]any{
+			"rating_average": newAverage,
+			"rating_count":   newCount,
+			"updated_at":     now,
+		}).Error; err != nil {
+			return fmt.Errorf("update rider rating aggregate rider_id=%s: %w", trip.RiderID, err)
+		}
+
+		result = RateRiderResult{RiderID: trip.RiderID, RatingAverage: newAverage, RatingCount: newCount}
+		return nil
+	})
+	if err != nil {
+		return RateRiderResult{}, err
+	}
+
+	return result, nil
+}
+
+// roundRating rounds to 2 decimal places, matching the numeric(3,2) column —
+// same rounding cab-request-handler's roundMoney does for the symmetric
+// drivers.rating_average aggregate.
+func roundRating(value float64) float64 {
+	return math.Round(value*100) / 100
 }
 
 // CancelTrip cancels a trip the driver has already accepted, from acceptance
